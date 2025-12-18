@@ -3,12 +3,13 @@
 ## Phase 0 - Setup (Current)
 - [x] Create Supabase project
 - [x] Create backend repository
-- [ ] Install Supabase CLI
-- [ ] Link to Supabase project
-- [ ] Design schema
+- [x] Install Supabase CLI
+- [x] Link to Supabase project
+- [x] Design schema
 
 ## Phase 1 - Foundation
-- [ ] Create migrations for core tables
+- [x] Create migrations for core tables
+- [ ] Review and push migrations to Supabase
 - [ ] Implement RLS policies
 - [ ] Hello World Edge Function
 - [ ] First mutation: assign-court
