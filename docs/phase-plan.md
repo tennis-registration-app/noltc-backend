@@ -11,7 +11,7 @@
 - [x] Create migrations for core tables
 - [x] Review and push migrations to Supabase
 - [x] Implement RLS policies
-- [ ] Hello World Edge Function
+- [x] Hello World Edge Function
 - [ ] First mutation: assign-court
 
 ## Phase 2 - Core Workflows
