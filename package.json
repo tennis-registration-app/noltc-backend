@@ -1,0 +1,33 @@
+{
+  "name": "noltc-backend",
+  "version": "1.0.0",
+  "description": "Supabase backend for the New Orleans Lawn Tennis Club Court Registration System.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "db:push": "supabase db push",
+    "db:reset": "supabase db reset",
+    "db:diff": "supabase db diff",
+    "db:status": "supabase status",
+    "functions:serve": "supabase functions serve",
+    "functions:deploy": "supabase functions deploy",
+    "gen:types": "supabase gen types typescript --linked > src/types/database.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tennis-registration-app/noltc-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tennis-registration-app/noltc-backend/issues"
+  },
+  "homepage": "https://github.com/tennis-registration-app/noltc-backend#readme",
+  "devDependencies": {
+    "supabase": "^2.67.2"
+  }
+}
