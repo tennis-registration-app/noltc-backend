@@ -12,7 +12,7 @@
 - [x] Review and push migrations to Supabase
 - [x] Implement RLS policies
 - [x] Hello World Edge Function
-- [ ] First mutation: assign-court
+- [x] First mutation: assign-court
 
 ## Phase 2 - Core Workflows
 (To be expanded)
