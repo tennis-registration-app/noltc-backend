@@ -15,10 +15,16 @@
 - [x] First mutation: assign-court
 
 ## Phase 2 - Core Workflows
-(To be expanded)
+- [x] end-session Edge Function
+- [x] create-block Edge Function
+- [x] cancel-block Edge Function
+- [x] join-waitlist Edge Function
+- [x] cancel-waitlist Edge Function
+- [x] assign-from-waitlist Edge Function
+- [x] update-system-settings Edge Function (admin only)
 
 ## Phase 3 - Realtime
-(To be expanded)
+- [x] Enable Realtime on key tables (sessions, waitlist, blocks, courts, settings)
 
 ## Phase 4 - Commerce & Exports
 (To be expanded)
