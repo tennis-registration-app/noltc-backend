@@ -9,8 +9,8 @@
 
 ## Phase 1 - Foundation
 - [x] Create migrations for core tables
-- [ ] Review and push migrations to Supabase
-- [ ] Implement RLS policies
+- [x] Review and push migrations to Supabase
+- [x] Implement RLS policies
 - [ ] Hello World Edge Function
 - [ ] First mutation: assign-court
 
