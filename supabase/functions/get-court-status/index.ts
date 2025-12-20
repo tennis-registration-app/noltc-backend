@@ -72,7 +72,9 @@ serve(async (req) => {
           type: session.session_type,
           started_at: session.started_at,
           scheduled_end_at: session.scheduled_end_at,
-          minutes_remaining: Math.max(0, Math.round(session.minutes_remaining)),
+          // Use Math.ceil to round UP - prevents false "overtime" when seconds remain
+          // E.g., 0.4 minutes (24 seconds) remaining should show as 1, not 0
+          minutes_remaining: Math.max(0, Math.ceil(session.minutes_remaining)),
           participants: session.participant_names || [],
         } : null,
         block: block ? {

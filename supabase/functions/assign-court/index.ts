@@ -234,6 +234,17 @@ serve(async (req) => {
       // Check if session is in overtime (scheduled_end_at is in the past)
       const scheduledEnd = new Date(activeSession.scheduled_end_at)
       const isOvertime = scheduledEnd < now
+      const minutesRemaining = (scheduledEnd.getTime() - now.getTime()) / (1000 * 60)
+
+      console.log(`🔍 Court availability check for court ${requestData.court_id}:`, {
+        sessionId: activeSession.id,
+        scheduledEnd: activeSession.scheduled_end_at,
+        scheduledEndMs: scheduledEnd.getTime(),
+        nowMs: now.getTime(),
+        nowISO: now.toISOString(),
+        minutesRemaining: minutesRemaining.toFixed(2),
+        isOvertime,
+      })
 
       if (isOvertime) {
         // End the overtime session to allow takeover
@@ -246,6 +257,7 @@ serve(async (req) => {
           })
           .eq('id', activeSession.id)
       } else {
+        console.log(`❌ Rejecting: Court has ${minutesRemaining.toFixed(2)} minutes remaining`)
         throw new Error('Court is currently occupied')
       }
     }
