@@ -122,19 +122,35 @@ serve(async (req) => {
     }
 
     // Check for active session
+    const now = new Date()
     const { data: activeSession } = await supabase
       .from('sessions')
-      .select('id')
+      .select('id, scheduled_end_at')
       .eq('court_id', requestData.court_id)
       .is('actual_end_at', null)
       .single()
 
     if (activeSession) {
-      throw new Error('Court is currently occupied')
+      // Check if session is in overtime (scheduled_end_at is in the past)
+      const scheduledEnd = new Date(activeSession.scheduled_end_at)
+      const isOvertime = scheduledEnd < now
+
+      if (isOvertime) {
+        // End the overtime session to allow takeover
+        console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
+        await supabase
+          .from('sessions')
+          .update({
+            actual_end_at: now.toISOString(),
+            end_reason: 'overtime_takeover',
+          })
+          .eq('id', activeSession.id)
+      } else {
+        throw new Error('Court is currently occupied')
+      }
     }
 
     // Check for active block
-    const now = new Date()
     const { data: activeBlock } = await supabase
       .from('blocks')
       .select('id, title')
