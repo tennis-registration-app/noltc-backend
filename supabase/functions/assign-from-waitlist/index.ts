@@ -136,15 +136,25 @@ serve(async (req) => {
       const isOvertime = scheduledEnd < now
 
       if (isOvertime) {
-        // End the overtime session to allow takeover
+        // End the overtime session to allow takeover - verify it succeeds
         console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
-        await supabase
+        const { data: endedSession, error: endError } = await supabase
           .from('sessions')
           .update({
             actual_end_at: now.toISOString(),
             end_reason: 'overtime_takeover',
           })
           .eq('id', activeSession.id)
+          .is('actual_end_at', null) // Extra safety: only update if still active
+          .select()
+          .single()
+
+        if (endError || !endedSession) {
+          console.error('Failed to end overtime session:', endError)
+          throw new Error(`Failed to end overtime session: ${endError?.message || 'Session already ended'}`)
+        }
+
+        console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         throw new Error('Court is currently occupied')
       }
