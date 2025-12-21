@@ -1,220 +1,205 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+// supabase/functions/end-session/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-interface EndSessionRequest {
-  session_id?: string
-  court_id?: string  // Alternative: end session by court
-  end_reason: 'completed' | 'cleared_early' | 'admin_override'
-  device_id: string
-  device_type: string
-  initiated_by?: 'user' | 'ai_assistant' | 'system'
-}
+};
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { headers: corsHeaders });
   }
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
-  let requestData: EndSessionRequest | null = null
-  let sessionId: string | null = null
-
   try {
-    requestData = await req.json() as EndSessionRequest
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
 
-    // ===========================================
-    // VALIDATION
-    // ===========================================
+    const { session_id, court_id, end_reason, device_id } = await req.json();
+    const serverNow = new Date().toISOString();
 
-    if (!requestData.session_id && !requestData.court_id) {
-      throw new Error('Either session_id or court_id is required')
-    }
-    if (!requestData.end_reason || !['completed', 'cleared_early', 'admin_override'].includes(requestData.end_reason)) {
-      throw new Error('end_reason must be "completed", "cleared_early", or "admin_override"')
-    }
-    if (!requestData.device_id) {
-      throw new Error('device_id is required')
-    }
-
-    // ===========================================
-    // VERIFY DEVICE EXISTS
-    // ===========================================
-
-    const { data: device, error: deviceError } = await supabase
-      .from('devices')
-      .select('*')
-      .eq('id', requestData.device_id)
-      .single()
-
-    if (deviceError || !device) {
-      throw new Error('Device not registered')
+    // Validate request - need either session_id or court_id
+    if (!session_id && !court_id) {
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'INVALID_REQUEST',
+        message: 'Either session_id or court_id is required',
+        serverNow
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
 
-    // Update device last_seen_at
-    await supabase
-      .from('devices')
-      .update({ last_seen_at: new Date().toISOString() })
-      .eq('id', requestData.device_id)
+    // Verify device if provided
+    if (device_id) {
+      const { error: deviceError } = await supabase
+        .from('devices')
+        .update({ last_seen_at: serverNow })
+        .eq('id', device_id);
 
-    // ===========================================
-    // FIND THE SESSION
-    // ===========================================
-
-    let session
-
-    if (requestData.session_id) {
-      // Find by session_id
-      const { data, error } = await supabase
-        .from('sessions')
-        .select('*, courts(court_number, name)')
-        .eq('id', requestData.session_id)
-        .is('actual_end_at', null)
-        .single()
-
-      if (error || !data) {
-        throw new Error('Active session not found')
+      if (deviceError) {
+        console.error('Device update error:', deviceError);
       }
-      session = data
+    }
+
+    // Find the active session
+    let sessionQuery = supabase
+      .from('sessions')
+      .select(`
+        id,
+        court_id,
+        session_type,
+        started_at,
+        scheduled_end_at,
+        courts!inner(court_number)
+      `)
+      .is('actual_end_at', null);
+
+    if (session_id) {
+      sessionQuery = sessionQuery.eq('id', session_id);
     } else {
-      // Find by court_id (get the active session on that court)
-      const { data, error } = await supabase
-        .from('sessions')
-        .select('*, courts(court_number, name)')
-        .eq('court_id', requestData.court_id)
-        .is('actual_end_at', null)
-        .single()
+      // Find by court_id - get the court UUID first
+      const { data: court } = await supabase
+        .from('courts')
+        .select('id')
+        .eq('court_number', court_id)
+        .single();
 
-      if (error || !data) {
-        throw new Error('No active session on this court')
+      if (!court) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: 'COURT_NOT_FOUND',
+          message: `Court ${court_id} not found`,
+          serverNow
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
       }
-      session = data
+
+      sessionQuery = sessionQuery.eq('court_id', court.id);
     }
 
-    sessionId = session.id
+    const { data: session, error: sessionError } = await sessionQuery.single();
 
-    // ===========================================
-    // GET PARTICIPANTS (for response)
-    // ===========================================
+    if (sessionError || !session) {
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'SESSION_NOT_FOUND',
+        message: 'No active session found',
+        serverNow
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
 
+    // Get participants for response
     const { data: participants } = await supabase
       .from('session_participants')
       .select(`
+        member_id,
         participant_type,
         guest_name,
-        members(display_name)
+        members(display_name, accounts(member_number))
       `)
-      .eq('session_id', session.id)
+      .eq('session_id', session.id);
 
-    const participantNames = participants?.map(p =>
-      p.participant_type === 'member' ? p.members?.display_name : p.guest_name
-    ) || []
+    // INSERT END event into session_events (append-only pattern)
+    const { error: eventError } = await supabase
+      .from('session_events')
+      .insert({
+        session_id: session.id,
+        event_type: 'END',
+        event_data: {
+          reason: end_reason || 'normal',
+          ended_by: device_id || 'user',
+          ended_at: serverNow
+        },
+        created_by: device_id || 'system'
+      });
 
-    // ===========================================
-    // END THE SESSION
-    // ===========================================
+    if (eventError) {
+      console.error('Session event insert error:', eventError);
+      
+      // Check if it's a duplicate END event (unique constraint violation)
+      if (eventError.code === '23505') {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: 'SESSION_ALREADY_ENDED',
+          message: 'This session has already been ended',
+          serverNow
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
 
-    const actualEndAt = new Date().toISOString()
-
-    const { error: updateError } = await supabase
-      .from('sessions')
-      .update({
-        actual_end_at: actualEndAt,
-        end_reason: requestData.end_reason,
-        ended_by_device_id: requestData.device_id,
-      })
-      .eq('id', session.id)
-
-    if (updateError) {
-      throw new Error(`Failed to end session: ${updateError.message}`)
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'EVENT_ERROR',
+        message: 'Failed to end session',
+        serverNow
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
 
-    // ===========================================
-    // CALCULATE ACTUAL DURATION
-    // ===========================================
+    // Calculate actual duration
+    const startedAt = new Date(session.started_at);
+    const endedAt = new Date(serverNow);
+    const actualDurationMinutes = Math.round((endedAt.getTime() - startedAt.getTime()) / 60000);
 
-    const startedAt = new Date(session.started_at)
-    const endedAt = new Date(actualEndAt)
-    const actualDurationMinutes = Math.round((endedAt.getTime() - startedAt.getTime()) / 60000)
-
-    // ===========================================
-    // AUDIT LOG - SUCCESS
-    // ===========================================
-
-    await supabase
-      .from('audit_log')
-      .insert({
-        action: 'session_end',
-        entity_type: 'session',
-        entity_id: session.id,
-        device_id: requestData.device_id,
-        device_type: requestData.device_type,
-        initiated_by: requestData.initiated_by || 'user',
-        request_data: {
-          court_number: session.courts?.court_number,
-          end_reason: requestData.end_reason,
-          scheduled_duration: session.duration_minutes,
-          actual_duration: actualDurationMinutes,
-          participant_count: participantNames.length,
-        },
-        outcome: 'success',
-        ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-      })
-
-    // ===========================================
-    // RETURN SUCCESS
-    // ===========================================
+    // Audit log
+    await supabase.from('audit_log').insert({
+      action: 'session_ended',
+      entity_type: 'session',
+      entity_id: session.id,
+      details: {
+        court_number: session.courts?.court_number,
+        end_reason: end_reason || 'normal',
+        actual_duration_minutes: actualDurationMinutes,
+        participant_count: participants?.length || 0
+      },
+      performed_by: device_id || 'system'
+    });
 
     return new Response(JSON.stringify({
       ok: true,
+      serverNow,
       session: {
         id: session.id,
-        court_id: session.court_id,
-        court_number: session.courts?.court_number,
-        court_name: session.courts?.name,
-        session_type: session.session_type,
-        started_at: session.started_at,
-        ended_at: actualEndAt,
-        end_reason: requestData.end_reason,
-        scheduled_duration_minutes: session.duration_minutes,
-        actual_duration_minutes: actualDurationMinutes,
-        participants: participantNames,
-      },
+        courtNumber: session.courts?.court_number,
+        sessionType: session.session_type,
+        startedAt: session.started_at,
+        endedAt: serverNow,
+        actualDurationMinutes,
+        participants: (participants || []).map(p => ({
+          memberId: p.member_id,
+          displayName: p.participant_type === 'guest' ? p.guest_name : p.members?.display_name,
+          memberNumber: p.members?.accounts?.member_number,
+          isGuest: p.participant_type === 'guest'
+        }))
+      }
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
 
   } catch (error) {
-    // Audit log - failure
-    await supabase
-      .from('audit_log')
-      .insert({
-        action: 'session_end',
-        entity_type: 'session',
-        entity_id: sessionId || '00000000-0000-0000-0000-000000000000',
-        device_id: requestData?.device_id || null,
-        device_type: requestData?.device_type || null,
-        initiated_by: requestData?.initiated_by || 'user',
-        request_data: requestData,
-        outcome: 'failure',
-        error_message: error.message,
-        ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-      })
-
+    console.error('Unexpected error:', error);
     return new Response(JSON.stringify({
       ok: false,
-      error: error.message,
+      code: 'INTERNAL_ERROR',
+      message: 'An unexpected error occurred',
+      serverNow: new Date().toISOString()
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
   }
-})
+});
