@@ -128,6 +128,20 @@ serve(async (req) => {
       
       // Check if it's a duplicate END event (unique constraint violation)
       if (eventError.code === '23505') {
+        // Even though event exists, ensure actual_end_at is set (recovery for past bugs)
+        // Valid end_reason values: 'completed', 'cleared_early'
+        const validReason = ['completed', 'cleared_early'].includes(end_reason)
+          ? end_reason
+          : 'cleared_early';
+
+        await supabase
+          .from('sessions')
+          .update({
+            actual_end_at: serverNow,
+            end_reason: validReason
+          })
+          .eq('id', session.id);
+
         return new Response(JSON.stringify({
           ok: false,
           code: 'SESSION_ALREADY_ENDED',
@@ -148,6 +162,20 @@ serve(async (req) => {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
+    }
+
+    // Update session with actual end time
+    const { error: updateError } = await supabase
+      .from('sessions')
+      .update({
+        actual_end_at: serverNow,
+        end_reason: end_reason || 'normal'
+      })
+      .eq('id', session.id);
+
+    if (updateError) {
+      console.error('Session update error:', updateError);
+      // Don't fail the request - the event was recorded, this is for denormalization
     }
 
     // Calculate actual duration
