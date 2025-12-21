@@ -1,45 +1,54 @@
-# Row Level Security Policies
+# Row Level Security (RLS) Policies
 
-## Strategy
+## Overview
 
-- **RLS enabled on ALL 16 tables**
-- **Clients (anon key)**: Read-only access to all tables
-- **Clients CANNOT write** to any tables directly
-- **Edge Functions (service_role key)**: Bypass RLS, can perform all operations
+All tables have RLS enabled. Access is controlled as follows:
 
-This ensures all mutations go through controlled Edge Functions.
+## Anon Role (Public/Kiosk Access)
 
-## Tables with RLS Enabled
+**Can READ:**
+- `board_change_signals` — Realtime subscription for "something changed" events
+- `operating_hours` — Club hours for display
+- `settings` — Public club settings
 
-| Table | SELECT | INSERT | UPDATE | DELETE |
-|-------|--------|--------|--------|--------|
-| accounts | ✅ anon | ❌ | ❌ | ❌ |
-| members | ✅ anon | ❌ | ❌ | ❌ |
-| courts | ✅ anon | ❌ | ❌ | ❌ |
-| devices | ✅ anon | ❌ | ❌ | ❌ |
-| sessions | ✅ anon | ❌ | ❌ | ❌ |
-| session_participants | ✅ anon | ❌ | ❌ | ❌ |
-| waitlist | ✅ anon | ❌ | ❌ | ❌ |
-| waitlist_members | ✅ anon | ❌ | ❌ | ❌ |
-| blocks | ✅ anon | ❌ | ❌ | ❌ |
-| transactions | ✅ anon | ❌ | ❌ | ❌ |
-| exports | ✅ anon | ❌ | ❌ | ❌ |
-| export_items | ✅ anon | ❌ | ❌ | ❌ |
-| audit_log | ✅ anon | ❌ | ❌ | ❌ |
-| system_settings | ✅ anon | ❌ | ❌ | ❌ |
-| operating_hours | ✅ anon | ❌ | ❌ | ❌ |
-| operating_hours_overrides | ✅ anon | ❌ | ❌ | ❌ |
+**Can EXECUTE:**
+- `get_court_board(request_time)` — Returns sanitized court status
+- `get_active_waitlist(request_time)` — Returns sanitized waitlist
 
-## Write Access
+**CANNOT read directly:**
+- `accounts` — Contains member numbers, billing info
+- `members` — Contains personal info
+- `devices` — Contains device tokens
+- `transactions` — Contains billing data
+- `audit_log` — Contains sensitive history
+- `sessions` — Use `get_court_board()` function instead
+- `session_events` — Internal data, use signals for Realtime
+- `waitlist` — Use `get_active_waitlist()` function instead
+- `courts` — Use `get_court_board()` function instead
+- `blocks` — Use `get_court_board()` function instead
+- `session_participants` — Internal data
 
-All writes MUST go through Edge Functions which use the `service_role` key.
-The service_role key bypasses RLS entirely, allowing Edge Functions to:
-- Insert new sessions, waitlist entries, transactions
-- Update session end times, waitlist status
-- Log to audit_log
+## Service Role (Edge Functions)
 
-## Security Notes
+Full access to all tables for mutations and queries.
 
-- No sensitive data is exposed (pin_hash is NULL for MVP)
-- Member numbers are visible for registration lookup
-- All mutation requests are validated and logged by Edge Functions
+## Realtime Subscriptions
+
+Clients subscribe to `board_change_signals` table only. This table contains:
+- `id` (UUID)
+- `change_type` ('session', 'waitlist', 'block')
+- `created_at` (timestamp)
+
+No sensitive data is exposed via Realtime. On any signal, clients call `get-board` Edge Function to refresh.
+
+## Security Model
+
+1. **Anon cannot write** — All mutations go through Edge Functions using service_role
+2. **Anon cannot read sensitive tables** — Only sanitized data via SECURITY DEFINER functions
+3. **Functions pin search_path** — All SECURITY DEFINER functions have `SET search_path = public, pg_temp`
+4. **Signals contain no data** — Just "something changed" notifications
+
+## Privacy
+
+- `member_number` (family billing number) is intentionally excluded from `get_court_board()` response
+- Only `display_name`, `is_guest`, and opaque `member_id` (UUID) are exposed
