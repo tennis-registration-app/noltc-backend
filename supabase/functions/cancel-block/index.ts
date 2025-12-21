@@ -22,6 +22,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+  // Consistent timestamp for the entire request
+  const serverNow = new Date().toISOString()
+
   let requestData: CancelBlockRequest | null = null
 
   try {
@@ -121,6 +124,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: true,
+      serverNow,
       block: {
         id: block.id,
         court_id: block.court_id,
@@ -156,10 +160,11 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
+      serverNow,
       error: error.message,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     })
   }
 })

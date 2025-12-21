@@ -33,6 +33,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+  // Consistent timestamp for the entire request
+  const serverNow = new Date().toISOString()
+
   let requestData: JoinWaitlistRequest | null = null
   let waitlistId = '00000000-0000-0000-0000-000000000000'
 
@@ -318,6 +321,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: true,
+      serverNow,
       waitlist: {
         id: waitlistEntry.id,
         group_type: waitlistEntry.group_type,
@@ -350,10 +354,11 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
+      serverNow,
       error: error.message,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     })
   }
 })
