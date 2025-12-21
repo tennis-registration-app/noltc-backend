@@ -25,6 +25,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+  // Consistent timestamp for the entire request
+  const serverNow = new Date().toISOString()
+
   let requestData: AssignFromWaitlistRequest | null = null
   let sessionId = '00000000-0000-0000-0000-000000000000'
 
@@ -136,24 +139,28 @@ serve(async (req) => {
       const isOvertime = scheduledEnd < now
 
       if (isOvertime) {
-        // End the overtime session to allow takeover - verify it succeeds
+        // End the overtime session using session_events (append-only pattern)
         console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
-        const { data: endedSession, error: endError } = await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: now.toISOString(),
-            end_reason: 'overtime_takeover',
+        const { error: endEventError } = await supabase
+          .from('session_events')
+          .insert({
+            session_id: activeSession.id,
+            event_type: 'END',
+            event_data: {
+              reason: 'overtime_takeover',
+              ended_by: requestData.device_id,
+              ended_at: serverNow
+            },
+            created_by: requestData.device_id
           })
-          .eq('id', activeSession.id)
-          .is('actual_end_at', null) // Extra safety: only update if still active
-          .select()
-          .single()
 
-        if (endError || !endedSession) {
-          console.error('Failed to end overtime session:', endError)
-          throw new Error(`Failed to end overtime session: ${endError?.message || 'Session already ended'}`)
+        if (endEventError) {
+          // Unique constraint violation means session already ended - that's OK
+          if (endEventError.code !== '23505') {
+            console.error('Failed to end overtime session:', endEventError)
+            throw new Error(`Failed to end overtime session: ${endEventError.message}`)
+          }
         }
-
         console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         throw new Error('Court is currently occupied')
@@ -392,6 +399,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: true,
+      serverNow,
       session: {
         id: session.id,
         court_id: session.court_id,
@@ -433,10 +441,11 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
+      serverNow,
       error: error.message,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     })
   }
 })

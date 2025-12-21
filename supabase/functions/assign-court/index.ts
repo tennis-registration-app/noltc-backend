@@ -37,6 +37,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+  // Consistent timestamp for the entire request
+  const serverNow = new Date().toISOString()
+
   let requestData: AssignCourtRequest | null = null
   let auditEntityId = '00000000-0000-0000-0000-000000000000'
 
@@ -247,22 +250,27 @@ serve(async (req) => {
       })
 
       if (isOvertime) {
-        // End the overtime session to allow takeover - verify it succeeds
+        // End the overtime session using session_events (append-only pattern)
         console.log(`Ending overtime session ${activeSession.id} for court takeover`)
-        const { data: endedSession, error: endError } = await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: now.toISOString(),
-            end_reason: 'overtime_takeover',
+        const { error: endEventError } = await supabase
+          .from('session_events')
+          .insert({
+            session_id: activeSession.id,
+            event_type: 'END',
+            event_data: {
+              reason: 'overtime_takeover',
+              ended_by: requestData.device_id,
+              ended_at: serverNow
+            },
+            created_by: requestData.device_id
           })
-          .eq('id', activeSession.id)
-          .is('actual_end_at', null) // Extra safety: only update if still active
-          .select()
-          .single()
 
-        if (endError || !endedSession) {
-          console.error('Failed to end overtime session:', endError)
-          throw new Error(`Failed to end overtime session: ${endError?.message || 'Session already ended'}`)
+        if (endEventError) {
+          // Unique constraint violation means session already ended - that's OK
+          if (endEventError.code !== '23505') {
+            console.error('Failed to end overtime session:', endEventError)
+            throw new Error(`Failed to end overtime session: ${endEventError.message}`)
+          }
         }
 
         console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
@@ -462,15 +470,23 @@ serve(async (req) => {
     // RETURN SUCCESS
     // ===========================================
 
-    // Fetch the complete session with participants for response
-    const { data: completeSession } = await supabase
-      .from('active_sessions_view')
-      .select('*')
+    // Fetch participants for response
+    const { data: sessionParticipants } = await supabase
+      .from('session_participants')
+      .select(`
+        participant_type,
+        guest_name,
+        members(display_name)
+      `)
       .eq('session_id', session.id)
-      .single()
+
+    const participantNames = sessionParticipants?.map(p =>
+      p.participant_type === 'member' ? p.members?.display_name : p.guest_name
+    ).filter(Boolean) || []
 
     return new Response(JSON.stringify({
       ok: true,
+      serverNow,
       session: {
         id: session.id,
         court_id: session.court_id,
@@ -480,7 +496,7 @@ serve(async (req) => {
         duration_minutes: session.duration_minutes,
         started_at: session.started_at,
         scheduled_end_at: session.scheduled_end_at,
-        participants: completeSession?.participant_names || [],
+        participants: participantNames,
       },
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -506,6 +522,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
+      serverNow,
       error: error.message,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
