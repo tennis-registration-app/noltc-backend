@@ -62,26 +62,33 @@ serve(async (req) => {
     if (session_id) {
       sessionQuery = sessionQuery.eq('id', session_id);
     } else {
-      // Find by court_id - get the court UUID first
-      const { data: court } = await supabase
-        .from('courts')
-        .select('id')
-        .eq('court_number', court_id)
-        .single();
+      // court_id can be either a UUID or a court number (1-12)
+      const isUUID = court_id.includes('-');
+      let courtUUID = court_id;
 
-      if (!court) {
-        return new Response(JSON.stringify({
-          ok: false,
-          code: 'COURT_NOT_FOUND',
-          message: `Court ${court_id} not found`,
-          serverNow
-        }), {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+      if (!isUUID) {
+        // Look up court UUID from court number
+        const { data: court } = await supabase
+          .from('courts')
+          .select('id')
+          .eq('court_number', parseInt(court_id))
+          .single();
+
+        if (!court) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: 'COURT_NOT_FOUND',
+            message: `Court ${court_id} not found`,
+            serverNow
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        courtUUID = court.id;
       }
 
-      sessionQuery = sessionQuery.eq('court_id', court.id);
+      sessionQuery = sessionQuery.eq('court_id', courtUUID);
     }
 
     const { data: session, error: sessionError } = await sessionQuery.single();
