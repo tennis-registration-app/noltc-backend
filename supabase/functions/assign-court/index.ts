@@ -484,6 +484,11 @@ serve(async (req) => {
       p.participant_type === 'member' ? p.members?.display_name : p.guest_name
     ).filter(Boolean) || []
 
+
+    // Insert board change signal for real-time updates
+    await supabase
+      .from("board_change_signals")
+      .insert({ change_type: "session" });
     return new Response(JSON.stringify({
       ok: true,
       serverNow,

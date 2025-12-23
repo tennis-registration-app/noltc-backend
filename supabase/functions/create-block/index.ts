@@ -206,6 +206,11 @@ serve(async (req) => {
     // Calculate duration in minutes
     const durationMinutes = Math.round((endsAt.getTime() - startsAt.getTime()) / 60000)
 
+    // Insert board change signal for real-time updates
+    await supabase
+      .from("board_change_signals")
+      .insert({ change_type: "block" });
+
     return new Response(JSON.stringify({
       ok: true,
       serverNow,

@@ -158,6 +158,11 @@ serve(async (req) => {
     // RETURN SUCCESS
     // ===========================================
 
+    // Insert board change signal for real-time updates
+    await supabase
+      .from("board_change_signals")
+      .insert({ change_type: "waitlist" });
+
     return new Response(JSON.stringify({
       ok: true,
       serverNow,
