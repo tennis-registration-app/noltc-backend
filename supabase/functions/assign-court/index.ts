@@ -309,6 +309,82 @@ serve(async (req) => {
     }
 
     // ===========================================
+    // CHECK IF ANY MEMBER IS ALREADY PLAYING
+    // ===========================================
+
+    const memberIds = requestData.participants
+      .filter(p => p.type === 'member' && p.member_id)
+      .map(p => p.member_id)
+
+    if (memberIds.length > 0) {
+      // Query for any active sessions containing these members
+      const { data: activeSessions } = await supabase
+        .from('session_participants')
+        .select(`
+          member_id,
+          sessions!inner(id, court_id, actual_end_at),
+          members(display_name)
+        `)
+        .in('member_id', memberIds)
+        .is('sessions.actual_end_at', null)
+
+      if (activeSessions && activeSessions.length > 0) {
+        // Find the first conflicting member
+        const conflict = activeSessions[0]
+        const memberName = conflict.members?.display_name || 'Member'
+
+        // Get court number for the error message
+        const { data: conflictCourt } = await supabase
+          .from('courts')
+          .select('court_number')
+          .eq('id', conflict.sessions.court_id)
+          .single()
+
+        const courtNum = conflictCourt?.court_number || '?'
+
+        return new Response(JSON.stringify({
+          ok: false,
+          code: 'MEMBER_ALREADY_PLAYING',
+          message: `${memberName} is already playing on Court ${courtNum}`,
+          serverNow,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 409,
+        })
+      }
+
+      // Check for members already on waitlist
+      const { data: waitlistPlayers, error: waitlistError } = await supabase
+        .from('waitlist_participants')
+        .select(`
+          member_id,
+          waitlist_entry:waitlist_entries!inner(id, status),
+          members(display_name)
+        `)
+        .in('member_id', memberIds)
+        .eq('waitlist_entry.status', 'waiting')
+
+      if (waitlistError) {
+        console.error('Error checking waitlist:', waitlistError)
+      }
+
+      if (waitlistPlayers && waitlistPlayers.length > 0) {
+        const conflict = waitlistPlayers[0]
+        const memberName = conflict.members?.display_name || 'Member'
+
+        return new Response(JSON.stringify({
+          ok: false,
+          code: 'MEMBER_ALREADY_ON_WAITLIST',
+          message: `${memberName} is already on the waitlist`,
+          serverNow,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 409,
+        })
+      }
+    }
+
+    // ===========================================
     // GET DURATION FROM SETTINGS
     // ===========================================
 
