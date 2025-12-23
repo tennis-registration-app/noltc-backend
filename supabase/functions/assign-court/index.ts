@@ -273,6 +273,20 @@ serve(async (req) => {
           }
         }
 
+        // Update sessions table to mark session as ended
+        const { error: endSessionError } = await supabase
+          .from('sessions')
+          .update({
+            actual_end_at: serverNow,
+            end_reason: 'cleared_early'
+          })
+          .eq('id', activeSession.id)
+
+        if (endSessionError) {
+          console.error('Failed to update session end time:', endSessionError)
+          throw new Error(`Failed to end overtime session: ${endSessionError.message}`)
+        }
+
         console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         console.log(`❌ Rejecting: Court has ${minutesRemaining.toFixed(2)} minutes remaining`)
