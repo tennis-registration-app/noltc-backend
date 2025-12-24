@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { validateGeofence } from "../_shared/geofence.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,6 +15,8 @@ interface AssignFromWaitlistRequest {
   add_balls?: boolean
   split_balls?: boolean
   initiated_by?: 'user' | 'ai_assistant'
+  latitude?: number
+  longitude?: number
 }
 
 serve(async (req) => {
@@ -66,6 +69,51 @@ serve(async (req) => {
       .from('devices')
       .update({ last_seen_at: new Date().toISOString() })
       .eq('id', requestData.device_id)
+
+    // ===========================================
+    // GEOFENCE VALIDATION (mobile only)
+    // ===========================================
+
+    let geofenceStatus: 'validated' | 'failed' | 'not_required' = 'not_required'
+
+    if (device.device_type === 'mobile') {
+      if (!requestData.latitude || !requestData.longitude) {
+        throw new Error('Location required for mobile registration')
+      }
+
+      const geofenceResult = await validateGeofence(
+        supabase,
+        requestData.latitude,
+        requestData.longitude
+      )
+
+      geofenceStatus = geofenceResult.isValid ? 'validated' : 'failed'
+
+      if (!geofenceResult.isValid) {
+        // Log the failed attempt
+        await supabase.from('audit_log').insert({
+          action: 'waitlist_assign',
+          entity_type: 'session',
+          entity_id: '00000000-0000-0000-0000-000000000000',
+          device_id: requestData.device_id,
+          device_type: requestData.device_type,
+          initiated_by: requestData.initiated_by || 'user',
+          request_data: {
+            waitlist_id: requestData.waitlist_id,
+            latitude: requestData.latitude,
+            longitude: requestData.longitude,
+            distance: geofenceResult.distance,
+            threshold: geofenceResult.threshold,
+          },
+          outcome: 'denied',
+          error_message: geofenceResult.message,
+          geofence_status: 'failed',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        })
+
+        throw new Error(geofenceResult.message)
+      }
+    }
 
     // ===========================================
     // FIND THE WAITLIST ENTRY
@@ -390,6 +438,7 @@ serve(async (req) => {
           split_balls: requestData.split_balls || false,
         },
         outcome: 'success',
+        geofence_status: geofenceStatus,
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
