@@ -6,16 +6,82 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+interface CleanupRequest {
+  device_id: string
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const serverNow = new Date().toISOString()
 
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
+
+    // Parse request
+    const requestData: CleanupRequest = await req.json()
+
+    if (!requestData.device_id) {
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'MISSING_DEVICE_ID',
+        message: 'device_id is required',
+        serverNow,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    // Verify device exists
+    const { data: device, error: deviceError } = await supabase
+      .from('devices')
+      .select('*')
+      .eq('id', requestData.device_id)
+      .single()
+
+    if (deviceError || !device) {
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'DEVICE_NOT_FOUND',
+        message: 'Device not registered',
+        serverNow,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    // Check admin authorization
+    if (device.device_type !== 'admin') {
+      await supabase
+        .from('audit_log')
+        .insert({
+          action: 'cleanup_sessions_unauthorized',
+          entity_type: 'session',
+          entity_id: '00000000-0000-0000-0000-000000000000',
+          device_id: device.id,
+          device_type: device.device_type,
+          outcome: 'denied',
+          error_message: 'Admin access required',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        })
+
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'UNAUTHORIZED',
+        message: 'Admin access required for cleanup operations',
+        serverNow,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403,
+      })
+    }
 
     // Get all active sessions grouped by court
     const { data: sessions, error: fetchError } = await supabase
