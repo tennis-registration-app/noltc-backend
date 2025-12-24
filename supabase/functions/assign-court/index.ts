@@ -26,6 +26,7 @@ interface AssignCourtRequest {
   initiated_by?: 'user' | 'ai_assistant'
   latitude?: number
   longitude?: number
+  accuracy?: number  // GPS accuracy in meters
   location_token?: string  // QR-based location verification
 }
 
@@ -213,6 +214,7 @@ serve(async (req) => {
             request_data: {
               latitude: requestData.latitude,
               longitude: requestData.longitude,
+              accuracy: requestData.accuracy,
               distance: geofenceResult.distance,
               threshold: geofenceResult.threshold,
               geo_verified_method: 'gps',
@@ -600,6 +602,7 @@ serve(async (req) => {
           add_balls: requestData.add_balls || false,
           split_balls: requestData.split_balls || false,
           geo_verified_method: geoVerifiedMethod,
+          accuracy: requestData.accuracy,
         },
         outcome: 'success',
         geofence_status: geofenceStatus,
