@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { validateGeofence } from "../_shared/geofence.ts"
+import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,6 +26,7 @@ interface AssignCourtRequest {
   initiated_by?: 'user' | 'ai_assistant'
   latitude?: number
   longitude?: number
+  location_token?: string  // QR-based location verification
 }
 
 serve(async (req) => {
@@ -182,42 +183,90 @@ serve(async (req) => {
     // ===========================================
 
     let geofenceStatus: 'validated' | 'failed' | 'not_required' = 'not_required'
+    let geoVerifiedMethod: 'gps' | 'qr' | null = null
 
     if (device.device_type === 'mobile') {
-      if (!requestData.latitude || !requestData.longitude) {
+      const hasGps = requestData.latitude && requestData.longitude
+      const hasToken = requestData.location_token
+
+      if (hasGps) {
+        // GPS-based validation
+        const geofenceResult = await validateGeofence(
+          supabase,
+          requestData.latitude!,
+          requestData.longitude!
+        )
+
+        geofenceStatus = geofenceResult.isValid ? 'validated' : 'failed'
+
+        if (geofenceResult.isValid) {
+          geoVerifiedMethod = 'gps'
+        } else {
+          // Log the failed GPS attempt
+          await supabase.from('audit_log').insert({
+            action: 'session_start',
+            entity_type: 'session',
+            entity_id: '00000000-0000-0000-0000-000000000000',
+            device_id: requestData.device_id,
+            device_type: requestData.device_type,
+            initiated_by: requestData.initiated_by || 'user',
+            request_data: {
+              latitude: requestData.latitude,
+              longitude: requestData.longitude,
+              distance: geofenceResult.distance,
+              threshold: geofenceResult.threshold,
+              geo_verified_method: 'gps',
+            },
+            outcome: 'denied',
+            error_message: geofenceResult.message,
+            geofence_status: 'failed',
+            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+          })
+
+          throw new Error(geofenceResult.message)
+        }
+      } else if (hasToken) {
+        // QR token-based validation
+        // Get first member's ID for token validation
+        const firstMember = requestData.participants.find(p => p.type === 'member')
+        const memberId = firstMember?.member_id || '00000000-0000-0000-0000-000000000000'
+
+        const tokenResult = await validateLocationToken(
+          supabase,
+          requestData.location_token!,
+          memberId,
+          requestData.device_id
+        )
+
+        geofenceStatus = tokenResult.isValid ? 'validated' : 'failed'
+
+        if (tokenResult.isValid) {
+          geoVerifiedMethod = 'qr'
+        } else {
+          // Log the failed token attempt
+          await supabase.from('audit_log').insert({
+            action: 'session_start',
+            entity_type: 'session',
+            entity_id: '00000000-0000-0000-0000-000000000000',
+            device_id: requestData.device_id,
+            device_type: requestData.device_type,
+            initiated_by: requestData.initiated_by || 'user',
+            request_data: {
+              location_token: requestData.location_token,
+              token_id: tokenResult.tokenId,
+              geo_verified_method: 'qr',
+            },
+            outcome: 'denied',
+            error_message: tokenResult.message,
+            geofence_status: 'failed',
+            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+          })
+
+          throw new Error(tokenResult.message)
+        }
+      } else {
+        // Neither GPS nor token provided
         throw new Error('Location required for mobile registration')
-      }
-
-      const geofenceResult = await validateGeofence(
-        supabase,
-        requestData.latitude,
-        requestData.longitude
-      )
-
-      geofenceStatus = geofenceResult.isValid ? 'validated' : 'failed'
-
-      if (!geofenceResult.isValid) {
-        // Log the failed attempt
-        await supabase.from('audit_log').insert({
-          action: 'session_start',
-          entity_type: 'session',
-          entity_id: '00000000-0000-0000-0000-000000000000',
-          device_id: requestData.device_id,
-          device_type: requestData.device_type,
-          initiated_by: requestData.initiated_by || 'user',
-          request_data: {
-            latitude: requestData.latitude,
-            longitude: requestData.longitude,
-            distance: geofenceResult.distance,
-            threshold: geofenceResult.threshold,
-          },
-          outcome: 'denied',
-          error_message: geofenceResult.message,
-          geofence_status: 'failed',
-          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-        })
-
-        throw new Error(geofenceResult.message)
       }
     }
 
@@ -550,6 +599,7 @@ serve(async (req) => {
           participant_count: requestData.participants.length,
           add_balls: requestData.add_balls || false,
           split_balls: requestData.split_balls || false,
+          geo_verified_method: geoVerifiedMethod,
         },
         outcome: 'success',
         geofence_status: geofenceStatus,

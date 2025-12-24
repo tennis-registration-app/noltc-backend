@@ -75,3 +75,90 @@ export async function validateGeofence(
       : `You must be at the club to register (${Math.round(distance)}m away, limit is ${threshold}m)`,
   }
 }
+
+// ============================================
+// Location Token Validation
+// ============================================
+
+export interface TokenValidationResult {
+  isValid: boolean
+  tokenId?: string
+  message: string
+}
+
+/**
+ * Validate and consume a location token
+ * Token is marked as used upon successful validation
+ */
+export async function validateLocationToken(
+  supabase: any,
+  token: string,
+  memberId: string,
+  deviceId: string
+): Promise<TokenValidationResult> {
+  if (!token || token.length !== 32) {
+    return {
+      isValid: false,
+      message: 'Invalid token format',
+    }
+  }
+
+  // Find the token
+  const { data: tokenRow, error: findError } = await supabase
+    .from('location_tokens')
+    .select('id, expires_at, used_at')
+    .eq('token', token.toUpperCase())
+    .single()
+
+  if (findError || !tokenRow) {
+    return {
+      isValid: false,
+      message: 'Token not found',
+    }
+  }
+
+  // Check if already used
+  if (tokenRow.used_at) {
+    return {
+      isValid: false,
+      tokenId: tokenRow.id,
+      message: 'Token has already been used',
+    }
+  }
+
+  // Check if expired
+  const now = new Date()
+  const expiresAt = new Date(tokenRow.expires_at)
+  if (now > expiresAt) {
+    return {
+      isValid: false,
+      tokenId: tokenRow.id,
+      message: 'Token has expired',
+    }
+  }
+
+  // Mark token as used
+  const { error: updateError } = await supabase
+    .from('location_tokens')
+    .update({
+      used_at: now.toISOString(),
+      used_by_member_id: memberId,
+      used_by_device_id: deviceId,
+    })
+    .eq('id', tokenRow.id)
+    .is('used_at', null) // Ensure not already used (race condition protection)
+
+  if (updateError) {
+    return {
+      isValid: false,
+      tokenId: tokenRow.id,
+      message: 'Failed to validate token',
+    }
+  }
+
+  return {
+    isValid: true,
+    tokenId: tokenRow.id,
+    message: 'Location verified via token',
+  }
+}
