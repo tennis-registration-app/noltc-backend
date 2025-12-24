@@ -62,6 +62,40 @@ serve(async (req) => {
       .eq('id', requestData.device_id)
 
     // ===========================================
+    // CHECK ADMIN AUTHORIZATION
+    // ===========================================
+
+    if (device.device_type !== 'admin') {
+      // Log unauthorized attempt
+      await supabase
+        .from('audit_log')
+        .insert({
+          action: 'block_cancel_unauthorized',
+          entity_type: 'block',
+          entity_id: requestData.block_id,
+          device_id: device.id,
+          device_type: device.device_type,
+          initiated_by: requestData.initiated_by || 'user',
+          request_data: {
+            block_id: requestData.block_id,
+          },
+          outcome: 'denied',
+          error_message: 'Admin access required',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        })
+
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'UNAUTHORIZED',
+        message: 'Admin access required to cancel court blocks',
+        serverNow,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403,
+      })
+    }
+
+    // ===========================================
     // FIND THE BLOCK
     // ===========================================
 

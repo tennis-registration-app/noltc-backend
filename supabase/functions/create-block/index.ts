@@ -100,6 +100,42 @@ serve(async (req) => {
       .eq('id', requestData.device_id)
 
     // ===========================================
+    // CHECK ADMIN AUTHORIZATION
+    // ===========================================
+
+    if (device.device_type !== 'admin') {
+      // Log unauthorized attempt
+      await supabase
+        .from('audit_log')
+        .insert({
+          action: 'block_create_unauthorized',
+          entity_type: 'block',
+          entity_id: '00000000-0000-0000-0000-000000000000',
+          device_id: device.id,
+          device_type: device.device_type,
+          initiated_by: requestData.initiated_by || 'user',
+          request_data: {
+            court_id: requestData.court_id,
+            block_type: requestData.block_type,
+            title: requestData.title,
+          },
+          outcome: 'denied',
+          error_message: 'Admin access required',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        })
+
+      return new Response(JSON.stringify({
+        ok: false,
+        code: 'UNAUTHORIZED',
+        message: 'Admin access required to create court blocks',
+        serverNow,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403,
+      })
+    }
+
+    // ===========================================
     // VERIFY COURT EXISTS AND IS ACTIVE
     // ===========================================
 
