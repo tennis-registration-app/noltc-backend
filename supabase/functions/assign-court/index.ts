@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
+import { endSession } from "../_shared/sessionLifecycle.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -276,15 +277,27 @@ serve(async (req) => {
     // CHECK COURT AVAILABILITY (with lock)
     // ===========================================
 
-    // Check for active session
-    const { data: activeSession } = await supabase
+    // Check for active sessions (may be multiple if data is stale)
+    const { data: activeSessions, error: sessionQueryError } = await supabase
       .from('sessions')
       .select('id, scheduled_end_at')
       .eq('court_id', requestData.court_id)
       .is('actual_end_at', null)
-      .single()
+      .order('started_at', { ascending: false })
 
-    if (activeSession) {
+    if (sessionQueryError) {
+      console.error('Error querying active sessions:', sessionQueryError)
+    }
+
+    // End ALL stale sessions on this court before proceeding
+    if (activeSessions && activeSessions.length > 0) {
+      // Log if there are multiple (indicates stale data issue)
+      if (activeSessions.length > 1) {
+        console.warn(`⚠️ Found ${activeSessions.length} active sessions on court ${requestData.court_id} - cleaning up stale sessions`)
+      }
+
+      // Get the most recent session for overtime check
+      const activeSession = activeSessions[0]
       // Check if session is in overtime (scheduled_end_at is in the past)
       const scheduledEnd = new Date(activeSession.scheduled_end_at)
       const isOvertime = scheduledEnd < now
@@ -301,44 +314,27 @@ serve(async (req) => {
       })
 
       if (isOvertime) {
-        // End the overtime session using session_events (append-only pattern)
-        console.log(`Ending overtime session ${activeSession.id} for court takeover`)
-        const { error: endEventError } = await supabase
-          .from('session_events')
-          .insert({
-            session_id: activeSession.id,
-            event_type: 'END',
-            event_data: {
-              reason: 'overtime_takeover',
-              ended_by: requestData.device_id,
-              ended_at: serverNow
+        // End ALL overtime/stale sessions on this court
+        console.log(`Ending ${activeSessions.length} session(s) for court takeover`)
+        for (const session of activeSessions) {
+          console.log(`  Ending session ${session.id}`)
+          const endResult = await endSession(supabase, {
+            sessionId: session.id,
+            serverNow,
+            endReason: 'cleared_early',
+            deviceId: requestData.device_id,
+            eventData: {
+              trigger: activeSessions.length > 1 ? 'stale_session_cleanup' : 'overtime_takeover',
             },
-            created_by: requestData.device_id
           })
 
-        if (endEventError) {
-          // Unique constraint violation means session already ended - that's OK
-          if (endEventError.code !== '23505') {
-            console.error('Failed to end overtime session:', endEventError)
-            throw new Error(`Failed to end overtime session: ${endEventError.message}`)
+          if (!endResult.success && !endResult.alreadyEnded) {
+            console.error(`Failed to end session ${session.id}:`, endResult.error)
+            // Continue trying to end other sessions
+          } else {
+            console.log(`  ✅ Ended session ${session.id}`)
           }
         }
-
-        // Update sessions table to mark session as ended
-        const { error: endSessionError } = await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: serverNow,
-            end_reason: 'cleared_early'
-          })
-          .eq('id', activeSession.id)
-
-        if (endSessionError) {
-          console.error('Failed to update session end time:', endSessionError)
-          throw new Error(`Failed to end overtime session: ${endSessionError.message}`)
-        }
-
-        console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         console.log(`❌ Rejecting: Court has ${minutesRemaining.toFixed(2)} minutes remaining`)
         throw new Error('Court is currently occupied')

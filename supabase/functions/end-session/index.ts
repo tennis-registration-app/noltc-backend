@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { endSession, signalBoardChange, findAllActiveSessionsOnCourt } from '../_shared/sessionLifecycle.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,7 +20,7 @@ serve(async (req) => {
     )
 
     const body = await req.json()
-    const { session_id, court_id, end_reason } = body
+    const { session_id, court_id, end_reason, device_id } = body
     const serverNow = new Date().toISOString()
 
     // Validate: need either session_id or court_id
@@ -42,7 +43,7 @@ serve(async (req) => {
     if (!targetSessionId && court_id) {
       // Determine if court_id is a UUID or a court number
       const isUUID = typeof court_id === 'string' && court_id.includes('-')
-      
+
       if (isUUID) {
         // court_id is already a UUID
         resolvedCourtId = court_id
@@ -60,13 +61,13 @@ serve(async (req) => {
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
           )
         }
-        
+
         const { data: courtData, error: courtError } = await supabase
           .from('courts')
           .select('id')
           .eq('court_number', courtNumber)
           .single()
-        
+
         if (courtError || !courtData) {
           return new Response(
             JSON.stringify({
@@ -78,21 +79,14 @@ serve(async (req) => {
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
           )
         }
-        
+
         resolvedCourtId = courtData.id
       }
 
-      // Find active session on this court (no END event exists)
-      const { data: activeSession, error: sessionError } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('court_id', resolvedCourtId)
-        .is('actual_end_at', null)
-        .order('started_at', { ascending: false })
-        .limit(1)
-        .single()
+      // Find ALL active sessions on this court (handles stale data)
+      const activeSessions = await findAllActiveSessionsOnCourt(supabase, resolvedCourtId)
 
-      if (sessionError || !activeSession) {
+      if (!activeSessions || activeSessions.length === 0) {
         return new Response(
           JSON.stringify({
             ok: false,
@@ -104,54 +98,75 @@ serve(async (req) => {
         )
       }
 
-      targetSessionId = activeSession.id
+      // Log if multiple sessions found (indicates stale data issue)
+      if (activeSessions.length > 1) {
+        console.warn(`⚠️ Found ${activeSessions.length} active sessions on court ${resolvedCourtId} - ending all`)
+      }
+
+      // End ALL sessions on this court
+      let sessionsEnded = 0
+      for (const session of activeSessions) {
+        const result = await endSession(supabase, {
+          sessionId: session.id,
+          serverNow,
+          endReason: end_reason || 'completed',
+          deviceId: device_id,
+        })
+        if (result.success || result.alreadyEnded) {
+          sessionsEnded++
+        }
+      }
+
+      console.log(`Ended ${sessionsEnded}/${activeSessions.length} sessions on court ${resolvedCourtId}`)
+
+      // Signal board change
+      await signalBoardChange(supabase, 'session')
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          serverNow,
+          sessionsEnded,
+          message: sessionsEnded > 1 ? `Ended ${sessionsEnded} sessions` : 'Session ended',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
-    // Insert END event (append-only pattern)
-    // The unique partial index on (session_id, event_type) WHERE event_type = 'END'
-    // ensures idempotency - duplicate END inserts will fail
-    const { error: eventError } = await supabase
-      .from('session_events')
-      .insert({
-        session_id: targetSessionId,
-        event_type: 'END',
-        event_data: { 
-          reason: end_reason || 'completed',
-          ended_at: serverNow 
-        },
-        created_by: null, // Could be device_id if passed
-      })
+    // If session_id was provided directly, end just that session
+    const result = await endSession(supabase, {
+      sessionId: targetSessionId,
+      serverNow,
+      endReason: end_reason || 'completed',
+      deviceId: device_id,
+    })
 
-    if (eventError) {
-      // Check for unique constraint violation (session already ended)
-      if (eventError.code === '23505') {
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            code: 'SESSION_ALREADY_ENDED',
-            message: 'This session has already been ended',
-            serverNow,
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
-        )
-      }
-      
-      console.error('Event insert error:', eventError)
+    if (result.alreadyEnded) {
       return new Response(
         JSON.stringify({
           ok: false,
-          code: 'EVENT_INSERT_FAILED',
-          message: eventError.message,
+          code: 'SESSION_ALREADY_ENDED',
+          message: 'This session has already been ended',
+          serverNow,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
+      )
+    }
+
+    if (!result.success) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: 'END_SESSION_FAILED',
+          message: result.error || 'Failed to end session',
           serverNow,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       )
     }
 
-    // Insert board change signal for real-time updates
-    await supabase
-      .from('board_change_signals')
-      .insert({ change_type: 'session' })
+    // Signal board change for real-time updates
+    await signalBoardChange(supabase, 'session')
 
     // Get session details for response
     const { data: session } = await supabase

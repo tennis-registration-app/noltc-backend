@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { endSession, signalBoardChange, findActiveSessionOnCourt } from '../_shared/sessionLifecycle.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -106,29 +107,22 @@ serve(async (req) => {
 
     if (!targetSessionId && court_id) {
       // Find active session on this court
-      const { data: activeSession, error: sessionError } = await supabase
-        .from('sessions')
-        .select('id, court_id')
-        .eq('court_id', court_id)
-        .is('actual_end_at', null)
-        .order('started_at', { ascending: false })
-        .limit(1)
-        .single()
+      const activeSession = await findActiveSessionOnCourt(supabase, court_id)
 
-      if (sessionError || !activeSession) {
+      if (!activeSession) {
+        // Idempotent: no active session is a no-op, not an error
         return new Response(
           JSON.stringify({
-            ok: false,
+            ok: true,
             code: 'NO_ACTIVE_SESSION',
-            message: 'No active session found on this court',
+            message: 'No active session on this court',
             serverNow,
           }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
         )
       }
 
       targetSessionId = activeSession.id
-      targetCourtId = activeSession.court_id
     }
 
     // Get session details before ending
@@ -150,48 +144,37 @@ serve(async (req) => {
       )
     }
 
-    // Insert END event (append-only)
-    const { error: eventError } = await supabase
-      .from('session_events')
-      .insert({
-        session_id: targetSessionId,
-        event_type: 'END',
-        event_data: {
-          reason: reason || 'admin_force_end',
-          ended_at: serverNow,
-          ended_by: device_id,
-        },
-        created_by: device_id,
-      })
+    targetCourtId = session.court_id
 
-    if (eventError) {
-      if (eventError.code === '23505') {
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            code: 'SESSION_ALREADY_ENDED',
-            message: 'Session has already been ended',
-            serverNow,
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
-        )
-      }
-      throw eventError
+    // End the session using shared helper
+    const result = await endSession(supabase, {
+      sessionId: targetSessionId,
+      serverNow,
+      endReason: 'admin_override',
+      deviceId: device_id,
+      eventData: {
+        admin_reason: reason || 'admin_force_end',
+      },
+    })
+
+    if (result.alreadyEnded) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: 'SESSION_ALREADY_ENDED',
+          message: 'Session has already been ended',
+          serverNow,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
+      )
     }
 
-    // Update session actual_end_at
-    await supabase
-      .from('sessions')
-      .update({
-        actual_end_at: serverNow,
-        end_reason: 'admin_override',
-      })
-      .eq('id', targetSessionId)
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to end session')
+    }
 
-    // Insert board change signal
-    await supabase
-      .from('board_change_signals')
-      .insert({ change_type: 'session' })
+    // Signal board change
+    await signalBoardChange(supabase, 'session')
 
     // Audit log
     await supabase
@@ -204,7 +187,7 @@ serve(async (req) => {
         device_type: device.device_type,
         request_data: {
           session_id: targetSessionId,
-          court_id: session.court_id,
+          court_id: targetCourtId,
           reason: reason || 'admin_force_end',
         },
         outcome: 'success',

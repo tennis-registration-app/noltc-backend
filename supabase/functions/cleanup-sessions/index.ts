@@ -97,9 +97,65 @@ serve(async (req) => {
       })
     }
 
-    // Group by court_id and find duplicates (keep newest)
+    // CLEANUP 1: Fix orphaned sessions (have END event but actual_end_at is null)
+    // This can happen if end-session was called before the fix was deployed
+    const { data: orphanedSessions, error: orphanError } = await supabase
+      .from('session_events')
+      .select('session_id, created_at')
+      .eq('event_type', 'END')
+
+    console.log('Cleanup debug: found', orphanedSessions?.length || 0, 'END events')
+    console.log('Cleanup debug: found', sessions?.length || 0, 'active sessions (actual_end_at is null)')
+
+    const orphanedToFix: { id: string; endedAt: string }[] = []
+    if (!orphanError && orphanedSessions) {
+      const endedSessionIds = new Set(orphanedSessions.map(e => e.session_id))
+      const endEventTimes: Record<string, string> = {}
+      for (const e of orphanedSessions) {
+        endEventTimes[e.session_id] = e.created_at
+      }
+
+      for (const s of sessions || []) {
+        if (endedSessionIds.has(s.id)) {
+          console.log('Cleanup debug: session', s.id, 'has END event, will fix')
+          orphanedToFix.push({
+            id: s.id,
+            endedAt: endEventTimes[s.id] || new Date().toISOString()
+          })
+        }
+      }
+    }
+    console.log('Cleanup debug: orphanedToFix count:', orphanedToFix.length)
+
+    // Fix orphaned sessions by setting actual_end_at to END event time
+    let orphanedFixed = 0
+    const fixErrors: string[] = []
+    for (const orphan of orphanedToFix) {
+      console.log('Cleanup: fixing orphan', orphan.id, 'with endedAt', orphan.endedAt)
+      const { error: fixError } = await supabase
+        .from('sessions')
+        .update({
+          actual_end_at: orphan.endedAt,
+          end_reason: 'cleared_early'  // These are sessions that were cleared but actual_end_at wasn't set
+        })
+        .eq('id', orphan.id)
+
+      if (fixError) {
+        console.error('Cleanup: fix error for', orphan.id, fixError)
+        fixErrors.push(`${orphan.id}: ${fixError.message}`)
+      } else {
+        console.log('Cleanup: fixed orphan', orphan.id)
+        orphanedFixed++
+      }
+    }
+
+    // CLEANUP 2: Group by court_id and find duplicates (keep newest)
+    // Exclude orphaned sessions we just fixed
+    const fixedIds = new Set(orphanedToFix.map(o => o.id))
+    const remainingSessions = (sessions || []).filter(s => !fixedIds.has(s.id))
+
     const courtSessions: Record<string, any[]> = {}
-    for (const s of sessions || []) {
+    for (const s of remainingSessions) {
       if (!courtSessions[s.court_id]) {
         courtSessions[s.court_id] = []
       }
@@ -118,35 +174,38 @@ serve(async (req) => {
       }
     }
 
-    if (toEnd.length === 0) {
-      return new Response(JSON.stringify({ 
-        ok: true, 
-        message: 'No duplicates found',
-        sessionsChecked: sessions?.length || 0
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
     // End the duplicate sessions with valid end_reason
-    const { error: updateError } = await supabase
-      .from('sessions')
-      .update({ 
-        actual_end_at: new Date().toISOString(),
-        end_reason: 'admin_override'
-      })
-      .in('id', toEnd)
+    let duplicatesEnded = 0
+    if (toEnd.length > 0) {
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({
+          actual_end_at: new Date().toISOString(),
+          end_reason: 'admin_override'
+        })
+        .in('id', toEnd)
 
-    if (updateError) {
-      return new Response(JSON.stringify({ ok: false, error: updateError.message }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500
-      })
+      if (!updateError) {
+        duplicatesEnded = toEnd.length
+      }
     }
 
-    return new Response(JSON.stringify({ 
-      ok: true, 
-      message: `Ended ${toEnd.length} duplicate sessions`,
+    // Signal board refresh
+    if (orphanedFixed > 0 || duplicatesEnded > 0) {
+      await supabase
+        .from('board_change_signals')
+        .insert({ change_type: 'session' })
+    }
+
+    return new Response(JSON.stringify({
+      ok: true,
+      message: `Fixed ${orphanedFixed} orphaned sessions, ended ${duplicatesEnded} duplicates`,
+      sessionsChecked: sessions?.length || 0,
+      endEventsFound: orphanedSessions?.length || 0,
+      orphanedFound: orphanedToFix.length,
+      orphanedFixed,
+      fixErrors: fixErrors.length > 0 ? fixErrors : undefined,
+      duplicatesEnded,
       endedIds: toEnd
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

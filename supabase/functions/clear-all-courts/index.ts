@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { endSession, signalBoardChange } from '../_shared/sessionLifecycle.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -114,48 +115,28 @@ serve(async (req) => {
       )
     }
 
-    // End each session
-    const endReason = reason || 'admin_override'
+    // End each session using shared helper
     let sessionsEnded = 0
 
     for (const session of activeSessions) {
-      // Insert END event
-      const { error: eventError } = await supabase
-        .from('session_events')
-        .insert({
-          session_id: session.id,
-          event_type: 'END',
-          event_data: {
-            reason: endReason,
-            ended_at: serverNow,
-            ended_by: device_id,
-          },
-          created_by: device_id,
-        })
+      const result = await endSession(supabase, {
+        sessionId: session.id,
+        serverNow,
+        endReason: 'admin_override',
+        deviceId: device_id,
+        eventData: {
+          admin_reason: reason || 'clear_all_courts',
+        },
+      })
 
-      // Skip if already ended (unique constraint)
-      if (eventError && eventError.code === '23505') {
-        continue
-      }
-
-      if (!eventError) {
-        // Update session
-        await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: serverNow,
-            end_reason: 'admin_override',
-          })
-          .eq('id', session.id)
-
+      // Skip already-ended sessions (shouldn't happen but handle gracefully)
+      if (result.success) {
         sessionsEnded++
       }
     }
 
-    // Insert board change signal
-    await supabase
-      .from('board_change_signals')
-      .insert({ change_type: 'session' })
+    // Signal board change
+    await signalBoardChange(supabase, 'session')
 
     // Audit log
     await supabase
@@ -167,7 +148,7 @@ serve(async (req) => {
         device_id: device.id,
         device_type: device.device_type,
         request_data: {
-          reason: endReason,
+          reason: reason || 'admin_override',
           sessions_ended: sessionsEnded,
           session_ids: activeSessions.map(s => s.id),
         },
