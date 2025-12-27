@@ -105,28 +105,32 @@ serve(async (req) => {
     }
 
     // Get waitlist entry details before removal
+    console.log('[remove-from-waitlist] Looking up waitlist entry:', waitlist_entry_id)
     const { data: entry, error: entryError } = await supabase
-      .from('waitlist_entries')
+      .from('waitlist')
       .select(`
         id,
         status,
         group_type,
         created_at,
-        waitlist_participants (
+        waitlist_members (
           member_id,
-          is_guest,
           guest_name
         )
       `)
       .eq('id', waitlist_entry_id)
       .single()
 
+    console.log('[remove-from-waitlist] Query result:', { entry, entryError })
+
     if (entryError || !entry) {
+      console.error('[remove-from-waitlist] Entry not found. Error:', entryError)
       return new Response(
         JSON.stringify({
           ok: false,
           code: 'WAITLIST_ENTRY_NOT_FOUND',
           message: 'Waitlist entry not found',
+          debug: { waitlist_entry_id, entryError: entryError?.message },
           serverNow,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
@@ -145,12 +149,11 @@ serve(async (req) => {
       )
     }
 
-    // Update waitlist entry status to removed
+    // Update waitlist entry status to cancelled (admin removed)
     const { error: updateError } = await supabase
-      .from('waitlist_entries')
+      .from('waitlist')
       .update({
-        status: 'removed',
-        removed_at: serverNow,
+        status: 'cancelled',
       })
       .eq('id', waitlist_entry_id)
 
@@ -176,7 +179,7 @@ serve(async (req) => {
           waitlist_entry_id,
           reason: reason || 'admin_removed',
           group_type: entry.group_type,
-          participants: entry.waitlist_participants,
+          participants: entry.waitlist_members,
         },
         outcome: 'success',
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',

@@ -236,9 +236,26 @@ serve(async (req) => {
       const isOvertime = scheduledEnd < now
 
       if (isOvertime) {
-        // End the overtime session using session_events (append-only pattern)
+        // End the overtime session
         console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
-        const { error: endEventError } = await supabase
+
+        // Update the session's actual_end_at (required for unique constraint)
+        const { error: endSessionError } = await supabase
+          .from('sessions')
+          .update({
+            actual_end_at: serverNow,
+            end_reason: 'admin_override'
+          })
+          .eq('id', activeSession.id)
+          .is('actual_end_at', null) // Only if not already ended
+
+        if (endSessionError) {
+          console.error('Failed to end overtime session:', endSessionError)
+          throw new Error(`Failed to end overtime session: ${endSessionError.message}`)
+        }
+
+        // Also insert END event for audit trail (ignore errors if already exists)
+        const { error: eventError } = await supabase
           .from('session_events')
           .insert({
             session_id: activeSession.id,
@@ -250,14 +267,10 @@ serve(async (req) => {
             },
             created_by: requestData.device_id
           })
-
-        if (endEventError) {
-          // Unique constraint violation means session already ended - that's OK
-          if (endEventError.code !== '23505') {
-            console.error('Failed to end overtime session:', endEventError)
-            throw new Error(`Failed to end overtime session: ${endEventError.message}`)
-          }
+        if (eventError) {
+          console.warn('Event insert warning (may already exist):', eventError.message)
         }
+
         console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         throw new Error('Court is currently occupied')
