@@ -1,49 +1,44 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  WAITLIST_STATUSES,
+  successResponse,
+  errorResponse,
+  notFoundResponse,
+  conflictResponse,
+  internalErrorResponse,
+} from '../_shared/index.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+};
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { headers: corsHeaders });
   }
+
+  const serverNow = new Date().toISOString();
 
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    );
 
-    const body = await req.json()
-    const { device_id, waitlist_entry_id, reason } = body
-    const serverNow = new Date().toISOString()
+    const body = await req.json();
+    const { device_id, waitlist_entry_id, reason } = body;
 
     // Validate required fields
     if (!device_id) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'MISSING_DEVICE',
-          message: 'device_id is required',
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
+      return addCorsHeaders(errorResponse('MISSING_DEVICE', 'device_id is required', serverNow));
     }
 
     if (!waitlist_entry_id) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'MISSING_WAITLIST_ENTRY',
-          message: 'waitlist_entry_id is required',
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
+      return addCorsHeaders(
+        errorResponse('MISSING_WAITLIST_ENTRY', 'waitlist_entry_id is required', serverNow)
+      );
     }
 
     // Verify admin device
@@ -51,64 +46,43 @@ serve(async (req) => {
       .from('devices')
       .select('id, device_type, is_active')
       .eq('id', device_id)
-      .single()
+      .single();
 
     if (deviceError || !device) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'INVALID_DEVICE',
-          message: 'Device not found',
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-      )
+      return addCorsHeaders(errorResponse('INVALID_DEVICE', 'Device not found', serverNow, 401));
     }
 
     if (!device.is_active) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'DEVICE_INACTIVE',
-          message: 'Device is not active',
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-      )
+      return addCorsHeaders(
+        errorResponse('DEVICE_INACTIVE', 'Device is not active', serverNow, 401)
+      );
     }
 
     // Check admin authorization
     if (device.device_type !== 'admin') {
-      await supabase
-        .from('audit_log')
-        .insert({
-          action: 'remove_from_waitlist_unauthorized',
-          entity_type: 'waitlist',
-          entity_id: waitlist_entry_id,
-          device_id: device.id,
-          device_type: device.device_type,
-          request_data: { waitlist_entry_id, reason },
-          outcome: 'denied',
-          error_message: 'Admin access required',
-          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-        })
+      await supabase.from('audit_log').insert({
+        action: 'remove_from_waitlist_unauthorized',
+        entity_type: 'waitlist',
+        entity_id: waitlist_entry_id,
+        device_id: device.id,
+        device_type: device.device_type,
+        request_data: { waitlist_entry_id, reason },
+        outcome: 'denied',
+        error_message: 'Admin access required',
+        ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+      });
 
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'UNAUTHORIZED',
-          message: 'Admin access required',
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
-      )
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Admin access required', serverNow, 403)
+      );
     }
 
     // Get waitlist entry details before removal
-    console.log('[remove-from-waitlist] Looking up waitlist entry:', waitlist_entry_id)
+    console.log('[remove-from-waitlist] Looking up waitlist entry:', waitlist_entry_id);
     const { data: entry, error: entryError } = await supabase
       .from('waitlist')
-      .select(`
+      .select(
+        `
         id,
         status,
         group_type,
@@ -117,94 +91,88 @@ serve(async (req) => {
           member_id,
           guest_name
         )
-      `)
+      `
+      )
       .eq('id', waitlist_entry_id)
-      .single()
+      .single();
 
-    console.log('[remove-from-waitlist] Query result:', { entry, entryError })
+    console.log('[remove-from-waitlist] Query result:', { entry, entryError });
 
     if (entryError || !entry) {
-      console.error('[remove-from-waitlist] Entry not found. Error:', entryError)
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'WAITLIST_ENTRY_NOT_FOUND',
-          message: 'Waitlist entry not found',
-          debug: { waitlist_entry_id, entryError: entryError?.message },
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
-      )
+      console.error('[remove-from-waitlist] Entry not found. Error:', entryError);
+      return addCorsHeaders(notFoundResponse('Waitlist entry not found', serverNow));
     }
 
-    if (entry.status !== 'waiting') {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          code: 'ENTRY_NOT_ACTIVE',
-          message: `Waitlist entry is not active (status: ${entry.status})`,
-          serverNow,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
-      )
+    // Use WAITLIST_STATUSES constant for status check
+    if (entry.status !== WAITLIST_STATUSES[0]) {
+      // 'waiting'
+      return addCorsHeaders(
+        conflictResponse(
+          'ENTRY_NOT_ACTIVE',
+          `Waitlist entry is not active (status: ${entry.status})`,
+          serverNow
+        )
+      );
     }
 
     // Update waitlist entry status to cancelled (admin removed)
     const { error: updateError } = await supabase
       .from('waitlist')
       .update({
-        status: 'cancelled',
+        status: WAITLIST_STATUSES[2], // 'cancelled'
       })
-      .eq('id', waitlist_entry_id)
+      .eq('id', waitlist_entry_id);
 
     if (updateError) {
-      throw updateError
+      throw updateError;
     }
 
     // Insert board change signal
-    await supabase
-      .from('board_change_signals')
-      .insert({ change_type: 'waitlist' })
+    await supabase.from('board_change_signals').insert({ change_type: 'waitlist' });
 
     // Audit log
-    await supabase
-      .from('audit_log')
-      .insert({
-        action: 'remove_from_waitlist',
-        entity_type: 'waitlist',
-        entity_id: waitlist_entry_id,
-        device_id: device.id,
-        device_type: device.device_type,
-        request_data: {
-          waitlist_entry_id,
-          reason: reason || 'admin_removed',
-          group_type: entry.group_type,
-          participants: entry.waitlist_members,
+    await supabase.from('audit_log').insert({
+      action: 'remove_from_waitlist',
+      entity_type: 'waitlist',
+      entity_id: waitlist_entry_id,
+      device_id: device.id,
+      device_type: device.device_type,
+      request_data: {
+        waitlist_entry_id,
+        reason: reason || 'admin_removed',
+        group_type: entry.group_type,
+        participants: entry.waitlist_members,
+      },
+      outcome: 'success',
+      ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+    });
+
+    return addCorsHeaders(
+      successResponse(
+        {
+          message: 'Removed from waitlist',
+          waitlistEntryId: waitlist_entry_id,
         },
-        outcome: 'success',
-        ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-      })
-
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        message: 'Removed from waitlist',
-        waitlistEntryId: waitlist_entry_id,
-        serverNow,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-
+        serverNow
+      )
+    );
   } catch (error) {
-    console.error('Unexpected error:', error)
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        code: 'INTERNAL_ERROR',
-        message: error.message,
-        serverNow: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    )
+    console.error('Unexpected error:', error);
+    return addCorsHeaders(internalErrorResponse(error.message, serverNow));
   }
-})
+});
+
+/**
+ * Add CORS headers to a response
+ */
+function addCorsHeaders(response: Response): Response {
+  const newHeaders = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    newHeaders.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+}

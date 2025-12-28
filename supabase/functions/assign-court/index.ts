@@ -2,6 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
 import { endSession } from "../_shared/sessionLifecycle.ts"
+import {
+  GROUP_TYPES,
+  isValidGroupType,
+  successResponse,
+  errorResponse,
+  conflictResponse,
+} from "../_shared/index.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -56,8 +63,8 @@ serve(async (req) => {
     if (!requestData.court_id) {
       throw new Error('court_id is required')
     }
-    if (!requestData.session_type || !['singles', 'doubles'].includes(requestData.session_type)) {
-      throw new Error('session_type must be "singles" or "doubles"')
+    if (!requestData.session_type || !isValidGroupType(requestData.session_type)) {
+      throw new Error(`session_type must be one of: ${GROUP_TYPES.join(', ')}`)
     }
     if (!requestData.participants || requestData.participants.length === 0) {
       throw new Error('At least one participant is required')
@@ -389,15 +396,13 @@ serve(async (req) => {
 
         const courtNum = conflictCourt?.court_number || '?'
 
-        return new Response(JSON.stringify({
-          ok: false,
-          code: 'MEMBER_ALREADY_PLAYING',
-          message: `${memberName} is already playing on Court ${courtNum}`,
-          serverNow,
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 409,
-        })
+        return addCorsHeaders(
+          conflictResponse(
+            'MEMBER_ALREADY_PLAYING',
+            `${memberName} is already playing on Court ${courtNum}`,
+            serverNow
+          )
+        )
       }
 
       // Check for members already on waitlist
@@ -419,15 +424,13 @@ serve(async (req) => {
         const conflict = waitlistPlayers[0]
         const memberName = conflict.members?.display_name || 'Member'
 
-        return new Response(JSON.stringify({
-          ok: false,
-          code: 'MEMBER_ALREADY_ON_WAITLIST',
-          message: `${memberName} is already on the waitlist`,
-          serverNow,
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 409,
-        })
+        return addCorsHeaders(
+          conflictResponse(
+            'MEMBER_ALREADY_ON_WAITLIST',
+            `${memberName} is already on the waitlist`,
+            serverNow
+          )
+        )
       }
     }
 
@@ -628,24 +631,25 @@ serve(async (req) => {
     await supabase
       .from("board_change_signals")
       .insert({ change_type: "session" });
-    return new Response(JSON.stringify({
-      ok: true,
-      serverNow,
-      session: {
-        id: session.id,
-        court_id: session.court_id,
-        court_number: court.court_number,
-        court_name: court.name,
-        session_type: session.session_type,
-        duration_minutes: session.duration_minutes,
-        started_at: session.started_at,
-        scheduled_end_at: session.scheduled_end_at,
-        participants: participantNames,
-      },
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+
+    return addCorsHeaders(
+      successResponse(
+        {
+          session: {
+            id: session.id,
+            court_id: session.court_id,
+            court_number: court.court_number,
+            court_name: court.name,
+            session_type: session.session_type,
+            duration_minutes: session.duration_minutes,
+            started_at: session.started_at,
+            scheduled_end_at: session.scheduled_end_at,
+            participants: participantNames,
+          },
+        },
+        serverNow
+      )
+    )
 
   } catch (error) {
     // Audit log - failure
@@ -664,13 +668,23 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
-    return new Response(JSON.stringify({
-      ok: false,
-      serverNow,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    return addCorsHeaders(
+      errorResponse('ASSIGN_COURT_FAILED', error.message, serverNow)
+    )
   }
 })
+
+/**
+ * Add CORS headers to a response
+ */
+function addCorsHeaders(response: Response): Response {
+  const newHeaders = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    newHeaders.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+}
