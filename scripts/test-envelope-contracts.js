@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Minimal envelope contract tests for Edge Functions
  *
@@ -6,8 +7,8 @@
  * - serverNow exists and is ISO string
  * - errors include code and message
  *
- * Run: SUPABASE_ANON_KEY=... npx ts-node scripts/test-envelope-contracts.ts
- * Or with custom URL: SUPABASE_ANON_KEY=... SUPABASE_URL=... npx ts-node scripts/test-envelope-contracts.ts
+ * Run: SUPABASE_ANON_KEY=... node scripts/test-envelope-contracts.js
+ * Or with custom URL: SUPABASE_ANON_KEY=... SUPABASE_URL=... node scripts/test-envelope-contracts.js
  */
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://dncjloqewjubodkoruou.supabase.co';
@@ -16,23 +17,12 @@ const DEVICE_ID = 'a0000000-0000-0000-0000-000000000001';
 
 if (!SUPABASE_ANON_KEY) {
   console.error('Error: SUPABASE_ANON_KEY environment variable is required');
-  console.error('Usage: SUPABASE_ANON_KEY=your-key npx ts-node scripts/test-envelope-contracts.ts');
+  console.error('Usage: SUPABASE_ANON_KEY=your-key node scripts/test-envelope-contracts.js');
   process.exit(1);
 }
 
-interface TestResult {
-  endpoint: string;
-  passed: boolean;
-  errors: string[];
-}
-
-async function testEnvelope(
-  endpoint: string,
-  method: string,
-  body?: object,
-  expectError: boolean = false
-): Promise<TestResult> {
-  const errors: string[] = [];
+async function testEnvelope(endpoint, method, body = null, expectError = false) {
+  const errors = [];
 
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
@@ -46,7 +36,7 @@ async function testEnvelope(
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    const data = (await response.json()) as Record<string, unknown>;
+    const data = await response.json();
 
     // Check ok field
     if (typeof data.ok !== 'boolean') {
@@ -56,7 +46,7 @@ async function testEnvelope(
     // Check serverNow field
     if (typeof data.serverNow !== 'string') {
       errors.push(`'serverNow' should be string, got ${typeof data.serverNow}`);
-    } else if (!/^\d{4}-\d{2}-\d{2}T/.test(data.serverNow as string)) {
+    } else if (!/^\d{4}-\d{2}-\d{2}T/.test(data.serverNow)) {
       errors.push(`'serverNow' should be ISO format, got ${data.serverNow}`);
     }
 
@@ -87,7 +77,7 @@ async function runTests() {
   console.log('\n=== Envelope Contract Tests ===\n');
   console.log(`Testing against: ${SUPABASE_URL}\n`);
 
-  const results: TestResult[] = [];
+  const results = [];
 
   // Test get-board (success case)
   results.push(await testEnvelope('get-board', 'GET'));
