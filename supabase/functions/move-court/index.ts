@@ -77,67 +77,32 @@ serve(async (req) => {
       );
     }
 
-    // Get the active session on from_court
-    const { data: fromSession, error: fromError } = await supabase
-      .from('sessions')
-      .select('id, court_id, started_at, scheduled_end_at, session_type')
-      .eq('court_id', resolvedFromCourtId)
-      .is('actual_end_at', null)
-      .single();
+    // Use atomic RPC function with row-level locking
+    const { data: result, error: rpcError } = await supabase.rpc('move_court_atomic', {
+      p_from_court_id: resolvedFromCourtId,
+      p_to_court_id: resolvedToCourtId,
+    });
 
-    if (fromError || !fromSession) {
-      return addCorsHeaders(
-        notFoundResponse('No active session found on source court', serverNow)
+    if (rpcError) {
+      console.error('RPC error:', rpcError);
+      return addCorsHeaders(internalErrorResponse('Database operation failed', serverNow));
+    }
+
+    if (!result.ok) {
+      // Log the rejection
+      console.log(
+        `[move-court] Rejected: ${result.code} - ${result.message} (${device_type || 'unknown'}:${device_id || 'unknown'})`
       );
+
+      if (result.code === 'NO_ACTIVE_SESSION') {
+        return addCorsHeaders(notFoundResponse(result.message, serverNow));
+      }
+      return addCorsHeaders(conflictResponse(result.code, result.message, serverNow));
     }
 
-    // Check for active session on to_court
-    const { data: toSession } = await supabase
-      .from('sessions')
-      .select('id')
-      .eq('court_id', resolvedToCourtId)
-      .is('actual_end_at', null)
-      .single();
-
-    if (toSession) {
-      return addCorsHeaders(
-        conflictResponse(
-          'DESTINATION_OCCUPIED',
-          'Destination court already has an active session',
-          serverNow
-        )
-      );
-    }
-
-    // Check for active blocks on to_court
-    const { data: toBlock } = await supabase
-      .from('court_blocks')
-      .select('id')
-      .eq('court_id', resolvedToCourtId)
-      .lte('starts_at', serverNow)
-      .gte('ends_at', serverNow)
-      .single();
-
-    if (toBlock) {
-      return addCorsHeaders(
-        conflictResponse('DESTINATION_BLOCKED', 'Destination court is currently blocked', serverNow)
-      );
-    }
-
-    // Atomically move the session by updating court_id
-    const { error: updateError } = await supabase
-      .from('sessions')
-      .update({ court_id: resolvedToCourtId })
-      .eq('id', fromSession.id);
-
-    if (updateError) {
-      console.error('Failed to move session:', updateError);
-      return addCorsHeaders(internalErrorResponse('Failed to move session', serverNow));
-    }
-
-    // Log the move action
+    // Log the successful move
     console.log(
-      `[move-court] Session ${fromSession.id} moved from ${resolvedFromCourtId} to ${resolvedToCourtId} by ${device_type || 'unknown'}:${device_id || 'unknown'}`
+      `[move-court] Session ${result.sessionId} moved from ${result.fromCourtId} to ${result.toCourtId} by ${device_type || 'unknown'}:${device_id || 'unknown'}`
     );
 
     // Signal board change for real-time updates
@@ -147,9 +112,9 @@ serve(async (req) => {
       successResponse(
         {
           message: 'Session moved successfully',
-          sessionId: fromSession.id,
-          fromCourtId: resolvedFromCourtId,
-          toCourtId: resolvedToCourtId,
+          sessionId: result.sessionId,
+          fromCourtId: result.fromCourtId,
+          toCourtId: result.toCourtId,
         },
         serverNow
       )

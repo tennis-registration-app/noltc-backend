@@ -16,6 +16,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { signalBoardChange } from '../_shared/sessionLifecycle.ts';
 import {
   successResponse,
+  errorResponse,
   internalErrorResponse,
 } from '../_shared/index.ts';
 
@@ -40,6 +41,16 @@ serve(async (req) => {
 
     const body = await req.json();
     const { device_id, device_type } = body;
+
+    // Validate admin access - only admin and kiosk devices can clear waitlist
+    if (device_type !== 'admin' && device_type !== 'kiosk') {
+      console.warn(
+        `[clear-waitlist] UNAUTHORIZED attempt by ${device_type || 'unknown'}:${device_id || 'unknown'}`
+      );
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Admin access required to clear waitlist', serverNow, 403)
+      );
+    }
 
     // Get count of waiting entries first
     const { data: waitingEntries, error: fetchError } = await supabase
@@ -78,10 +89,28 @@ serve(async (req) => {
       return addCorsHeaders(internalErrorResponse('Failed to clear waitlist', serverNow));
     }
 
-    // Log the action
-    console.log(
-      `[clear-waitlist] Cancelled ${waitingEntries.length} entries by ${device_type || 'unknown'}:${device_id || 'unknown'}`
-    );
+    // Audit log the admin action with context
+    const auditContext = {
+      action: 'clear_waitlist',
+      device_id: device_id || 'unknown',
+      device_type: device_type || 'unknown',
+      entries_cancelled: waitingEntries.length,
+      entry_ids: waitingEntries.map((e: { id: string }) => e.id),
+      timestamp: serverNow,
+    };
+    console.log(`[clear-waitlist] SUCCESS:`, JSON.stringify(auditContext));
+
+    // Write to audit_log table for persistent tracking
+    await supabase.from('audit_log').insert({
+      action: 'clear_waitlist',
+      actor_device_id: device_id,
+      actor_device_type: device_type,
+      details: {
+        entries_cancelled: waitingEntries.length,
+        entry_ids: waitingEntries.map((e: { id: string }) => e.id),
+      },
+      created_at: serverNow,
+    });
 
     // Signal board change for real-time updates
     await signalBoardChange(supabase, 'waitlist');
