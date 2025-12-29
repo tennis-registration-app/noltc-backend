@@ -40,15 +40,72 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    const { device_id, device_type } = body;
+    const { device_id } = body;
+
+    // Require device_id
+    if (!device_id) {
+      return addCorsHeaders(
+        errorResponse('BAD_REQUEST', 'device_id is required', serverNow, 400)
+      );
+    }
+
+    // Verify device against registry (don't trust client-provided device_type)
+    const { data: device, error: deviceError } = await supabase
+      .from('devices')
+      .select('id, device_type, is_active')
+      .eq('id', device_id)
+      .single();
+
+    if (deviceError || !device) {
+      console.warn(`[clear-waitlist] UNAUTHORIZED: Unknown device ${device_id}`);
+      await supabase.from('audit_log').insert({
+        action: 'clear_waitlist',
+        entity_type: 'waitlist',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        outcome: 'denied',
+        error_message: 'Unknown device',
+        created_at: serverNow,
+      });
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Unknown device', serverNow, 403)
+      );
+    }
+
+    if (!device.is_active) {
+      console.warn(`[clear-waitlist] UNAUTHORIZED: Inactive device ${device_id}`);
+      await supabase.from('audit_log').insert({
+        action: 'clear_waitlist',
+        entity_type: 'waitlist',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        device_type: device.device_type,
+        outcome: 'denied',
+        error_message: 'Device is inactive',
+        created_at: serverNow,
+      });
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Device is inactive', serverNow, 403)
+      );
+    }
 
     // Validate admin access - only admin and kiosk devices can clear waitlist
-    if (device_type !== 'admin' && device_type !== 'kiosk') {
+    if (device.device_type !== 'admin' && device.device_type !== 'kiosk') {
       console.warn(
-        `[clear-waitlist] UNAUTHORIZED attempt by ${device_type || 'unknown'}:${device_id || 'unknown'}`
+        `[clear-waitlist] UNAUTHORIZED: Device ${device_id} is ${device.device_type}, not admin`
       );
+      await supabase.from('audit_log').insert({
+        action: 'clear_waitlist',
+        entity_type: 'waitlist',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        device_type: device.device_type,
+        outcome: 'denied',
+        error_message: `Device type ${device.device_type} not authorized`,
+        created_at: serverNow,
+      });
       return addCorsHeaders(
-        errorResponse('UNAUTHORIZED', 'Admin access required to clear waitlist', serverNow, 403)
+        errorResponse('UNAUTHORIZED', 'Admin access required', serverNow, 403)
       );
     }
 
@@ -92,8 +149,8 @@ serve(async (req) => {
     // Audit log the admin action with context
     const auditContext = {
       action: 'clear_waitlist',
-      device_id: device_id || 'unknown',
-      device_type: device_type || 'unknown',
+      device_id: device.id,
+      device_type: device.device_type,
       entries_cancelled: waitingEntries.length,
       entry_ids: waitingEntries.map((e: { id: string }) => e.id),
       timestamp: serverNow,
@@ -103,9 +160,12 @@ serve(async (req) => {
     // Write to audit_log table for persistent tracking
     await supabase.from('audit_log').insert({
       action: 'clear_waitlist',
-      actor_device_id: device_id,
-      actor_device_type: device_type,
-      details: {
+      entity_type: 'waitlist',
+      entity_id: '00000000-0000-0000-0000-000000000000',
+      device_id: device.id,
+      device_type: device.device_type,
+      outcome: 'success',
+      request_data: {
         entries_cancelled: waitingEntries.length,
         entry_ids: waitingEntries.map((e: { id: string }) => e.id),
       },

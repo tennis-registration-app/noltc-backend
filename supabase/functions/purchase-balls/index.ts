@@ -13,6 +13,7 @@ interface PurchaseBallsRequest {
   account_id: string
   split_balls?: boolean
   split_account_ids?: string[]  // If splitting, which accounts to charge
+  idempotency_key?: string  // Client-provided key to prevent duplicate charges
 }
 
 serve(async (req) => {
@@ -80,6 +81,57 @@ serve(async (req) => {
     }
 
     // ===========================================
+    // IDEMPOTENCY CHECK
+    // ===========================================
+
+    if (requestData.idempotency_key) {
+      // Check if a transaction with this idempotency key already exists
+      const { data: existingTx, error: existingError } = await supabase
+        .from('transactions')
+        .select('id, account_id, amount_cents, description')
+        .eq('idempotency_key', requestData.idempotency_key)
+        .maybeSingle()
+
+      if (existingTx) {
+        // Return cached result - don't charge again
+        console.log(`[purchase-balls] Idempotent hit: ${requestData.idempotency_key}`)
+
+        await supabase.from('audit_log').insert({
+          action: 'ball_purchase_idempotent',
+          entity_type: 'transaction',
+          entity_id: existingTx.id,
+          device_id: requestData.device_id,
+          device_type: device.device_type,
+          initiated_by: 'user',
+          request_data: {
+            idempotency_key: requestData.idempotency_key,
+            cached_transaction_id: existingTx.id,
+          },
+          outcome: 'success',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+          created_at: serverNow,
+        })
+
+        return new Response(JSON.stringify({
+          ok: true,
+          serverNow,
+          idempotent: true,
+          transactions: [{
+            id: existingTx.id,
+            account_id: existingTx.account_id,
+            amount_cents: existingTx.amount_cents,
+            amount_dollars: (existingTx.amount_cents / 100).toFixed(2),
+            description: existingTx.description,
+          }],
+          total_cents: existingTx.amount_cents,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        })
+      }
+    }
+
+    // ===========================================
     // GET BALL PRICE
     // ===========================================
 
@@ -108,6 +160,11 @@ serve(async (req) => {
           .eq('id', accountId)
           .single()
 
+        // For split transactions, append account suffix to idempotency key
+        const splitIdempotencyKey = requestData.idempotency_key
+          ? `${requestData.idempotency_key}-${accountId}`
+          : null
+
         const { data: tx, error: txError } = await supabase
           .from('transactions')
           .insert({
@@ -117,6 +174,7 @@ serve(async (req) => {
             amount_cents: splitAmount,
             description: `Ball purchase (split) - ${session.courts?.name || 'Court'}`,
             created_by_device_id: requestData.device_id,
+            idempotency_key: splitIdempotencyKey,
           })
           .select()
           .single()
@@ -137,6 +195,7 @@ serve(async (req) => {
           amount_cents: ballPriceCents,
           description: `Ball purchase - ${session.courts?.name || 'Court'}`,
           created_by_device_id: requestData.device_id,
+          idempotency_key: requestData.idempotency_key || null,
         })
         .select()
         .single()
@@ -158,16 +217,18 @@ serve(async (req) => {
         entity_type: 'transaction',
         entity_id: transactions[0].id,
         device_id: requestData.device_id,
-        device_type: requestData.device_type,
+        device_type: device.device_type,
         initiated_by: 'user',
         request_data: {
           session_id: requestData.session_id,
           account_id: requestData.account_id,
           split: requestData.split_balls,
           amount_cents: ballPriceCents,
+          idempotency_key: requestData.idempotency_key || null,
         },
         outcome: 'success',
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        created_at: serverNow,
       })
 
     // ===========================================
@@ -201,10 +262,14 @@ serve(async (req) => {
         device_id: requestData?.device_id || null,
         device_type: requestData?.device_type || null,
         initiated_by: 'user',
-        request_data: requestData,
+        request_data: {
+          ...requestData,
+          idempotency_key: requestData?.idempotency_key || null,
+        },
         outcome: 'failure',
         error_message: error.message,
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        created_at: serverNow,
       })
 
     return new Response(JSON.stringify({

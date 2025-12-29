@@ -2,14 +2,16 @@
  * Move Court — Atomically move an active session from one court to another
  *
  * POST /move-court
- * Body: { from_court_id, to_court_id, device_id?, device_type? }
+ * Body: { from_court_id, to_court_id, device_id }
  *
  * Server behavior:
- * 1. Validate from_court has active session
- * 2. Validate to_court is available (not occupied, not blocked)
- * 3. Move session atomically (update court_id on session)
- * 4. Signal board change for real-time updates
- * 5. Return success with updated session info
+ * 1. Verify device against registry (admin/kiosk only)
+ * 2. Validate from_court has active session
+ * 3. Validate to_court is available (not occupied, not blocked)
+ * 4. Move session atomically (update court_id on session)
+ * 5. Audit log all attempts (success/failure/denied)
+ * 6. Signal board change for real-time updates
+ * 7. Return success with updated session info
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -43,7 +45,77 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    const { from_court_id, to_court_id, device_id, device_type } = body;
+    const { from_court_id, to_court_id, device_id } = body;
+
+    // Require device_id
+    if (!device_id) {
+      return addCorsHeaders(
+        errorResponse('BAD_REQUEST', 'device_id is required', serverNow, 400)
+      );
+    }
+
+    // Verify device against registry (don't trust client-provided device_type)
+    const { data: device, error: deviceError } = await supabase
+      .from('devices')
+      .select('id, device_type, is_active')
+      .eq('id', device_id)
+      .single();
+
+    if (deviceError || !device) {
+      console.warn(`[move-court] UNAUTHORIZED: Unknown device ${device_id}`);
+      await supabase.from('audit_log').insert({
+        action: 'move_court',
+        entity_type: 'session',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        outcome: 'denied',
+        error_message: 'Unknown device',
+        request_data: { from_court_id, to_court_id },
+        created_at: serverNow,
+      });
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Unknown device', serverNow, 403)
+      );
+    }
+
+    if (!device.is_active) {
+      console.warn(`[move-court] UNAUTHORIZED: Inactive device ${device_id}`);
+      await supabase.from('audit_log').insert({
+        action: 'move_court',
+        entity_type: 'session',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        device_type: device.device_type,
+        outcome: 'denied',
+        error_message: 'Device is inactive',
+        request_data: { from_court_id, to_court_id },
+        created_at: serverNow,
+      });
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Device is inactive', serverNow, 403)
+      );
+    }
+
+    // Validate admin access - only admin and kiosk devices can move courts
+    if (device.device_type !== 'admin' && device.device_type !== 'kiosk') {
+      console.warn(
+        `[move-court] UNAUTHORIZED: Device ${device_id} is ${device.device_type}, not admin`
+      );
+      await supabase.from('audit_log').insert({
+        action: 'move_court',
+        entity_type: 'session',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device_id,
+        device_type: device.device_type,
+        outcome: 'denied',
+        error_message: `Device type ${device.device_type} not authorized`,
+        request_data: { from_court_id, to_court_id },
+        created_at: serverNow,
+      });
+      return addCorsHeaders(
+        errorResponse('UNAUTHORIZED', 'Admin access required', serverNow, 403)
+      );
+    }
 
     // Validate required fields
     if (!from_court_id) {
@@ -91,8 +163,21 @@ serve(async (req) => {
     if (!result.ok) {
       // Log the rejection
       console.log(
-        `[move-court] Rejected: ${result.code} - ${result.message} (${device_type || 'unknown'}:${device_id || 'unknown'})`
+        `[move-court] Rejected: ${result.code} - ${result.message} (${device.device_type}:${device.id})`
       );
+
+      // Audit log the failure
+      await supabase.from('audit_log').insert({
+        action: 'move_court',
+        entity_type: 'session',
+        entity_id: '00000000-0000-0000-0000-000000000000',
+        device_id: device.id,
+        device_type: device.device_type,
+        outcome: 'failure',
+        error_message: `${result.code}: ${result.message}`,
+        request_data: { from_court_id, to_court_id },
+        created_at: serverNow,
+      });
 
       if (result.code === 'NO_ACTIVE_SESSION') {
         return addCorsHeaders(notFoundResponse(result.message, serverNow));
@@ -102,8 +187,23 @@ serve(async (req) => {
 
     // Log the successful move
     console.log(
-      `[move-court] Session ${result.sessionId} moved from ${result.fromCourtId} to ${result.toCourtId} by ${device_type || 'unknown'}:${device_id || 'unknown'}`
+      `[move-court] Session ${result.sessionId} moved from ${result.fromCourtId} to ${result.toCourtId} by ${device.device_type}:${device.id}`
     );
+
+    // Audit log the success
+    await supabase.from('audit_log').insert({
+      action: 'move_court',
+      entity_type: 'session',
+      entity_id: result.sessionId,
+      device_id: device.id,
+      device_type: device.device_type,
+      outcome: 'success',
+      request_data: {
+        from_court_id: result.fromCourtId,
+        to_court_id: result.toCourtId,
+      },
+      created_at: serverNow,
+    });
 
     // Signal board change for real-time updates
     await signalBoardChange(supabase, 'session');
