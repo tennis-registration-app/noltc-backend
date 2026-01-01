@@ -284,13 +284,28 @@ serve(async (req) => {
     // CHECK COURT AVAILABILITY (with lock)
     // ===========================================
 
+    // Track displaced session for potential restore
+    let displacedSessionId: string | null = null
+    let displacedCourtId: string | null = null
+    let displacedPlayerNames: string[] = []
+
+    // Pre-generate session ID so we can reference it in the END event for displaced sessions
+    const newSessionId = crypto.randomUUID()
+
     // Check for active sessions (may be multiple if data is stale)
+    console.log(`[assign-court] Checking for active sessions on court ${requestData.court_id}`)
     const { data: activeSessions, error: sessionQueryError } = await supabase
       .from('sessions')
       .select('id, scheduled_end_at')
       .eq('court_id', requestData.court_id)
       .is('actual_end_at', null)
       .order('started_at', { ascending: false })
+
+    console.log(`[assign-court] Active sessions query result:`, {
+      count: activeSessions?.length ?? 0,
+      sessionIds: activeSessions?.map(s => s.id) ?? [],
+      error: sessionQueryError?.message ?? null,
+    })
 
     if (sessionQueryError) {
       console.error('Error querying active sessions:', sessionQueryError)
@@ -321,6 +336,24 @@ serve(async (req) => {
       })
 
       if (isOvertime) {
+        // Capture the displaced session ID before ending (for potential restore)
+        displacedSessionId = activeSessions[0].id
+        displacedCourtId = requestData.court_id
+
+        // Fetch participants for the displaced session before ending it
+        const { data: displacedParticipants } = await supabase
+          .from('session_participants')
+          .select(`
+            participant_type,
+            guest_name,
+            members(display_name)
+          `)
+          .eq('session_id', displacedSessionId)
+
+        displacedPlayerNames = displacedParticipants?.map(p =>
+          p.participant_type === 'member' ? p.members?.display_name : p.guest_name
+        ).filter(Boolean) || []
+
         // End ALL overtime/stale sessions on this court
         console.log(`Ending ${activeSessions.length} session(s) for court takeover`)
         for (const session of activeSessions) {
@@ -332,6 +365,7 @@ serve(async (req) => {
             deviceId: requestData.device_id,
             eventData: {
               trigger: activeSessions.length > 1 ? 'stale_session_cleanup' : 'overtime_takeover',
+              takeover_session_id: newSessionId, // Reference to the session being created
             },
           })
 
@@ -457,9 +491,16 @@ serve(async (req) => {
     const startedAt = new Date()
     const scheduledEndAt = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
 
+    console.log(`[assign-court] About to create new session on court ${requestData.court_id}`, {
+      displacedSessionId,
+      displacedCourtId,
+      startedAt: startedAt.toISOString(),
+    })
+
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .insert({
+        id: newSessionId, // Use pre-generated ID for traceability
         court_id: requestData.court_id,
         session_type: requestData.session_type,
         duration_minutes: durationMinutes,
@@ -471,10 +512,21 @@ serve(async (req) => {
       .single()
 
     if (sessionError || !session) {
+      console.error(`[assign-court] Failed to create session:`, sessionError)
       throw new Error(`Failed to create session: ${sessionError?.message}`)
     }
 
+    console.log(`[assign-court] ✅ Session created successfully:`, {
+      sessionId: session.id,
+      courtId: session.court_id,
+    })
+
     auditEntityId = session.id
+
+    // Calculate restoreUntil for displaced session (30 seconds from now)
+    const restoreUntil = displacedSessionId
+      ? new Date(new Date(serverNow).getTime() + 30000).toISOString()
+      : null
 
     // ===========================================
     // CREATE PARTICIPANTS
@@ -646,6 +698,13 @@ serve(async (req) => {
             scheduled_end_at: session.scheduled_end_at,
             participants: participantNames,
           },
+          displacement: displacedSessionId ? {
+            displacedSessionId,
+            displacedCourtId,
+            takeoverSessionId: session.id,
+            restoreUntil,
+            participants: displacedPlayerNames,
+          } : null,
         },
         serverNow
       )

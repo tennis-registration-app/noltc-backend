@@ -76,7 +76,10 @@ export async function endSession(
   // Normalize end_reason to valid constraint value
   const endReason = normalizeEndReason(rawEndReason)
 
-  // Step 1: Insert END event (source of truth, idempotent via unique constraint)
+  // Step 1: Insert END event (source of truth)
+  // Note: Multiple END events are allowed for sessions that were restored.
+  // The active_sessions_view handles this by checking if the most recent
+  // RESTORE is newer than the most recent END.
   const { error: eventError } = await supabase
     .from('session_events')
     .insert({
@@ -91,12 +94,7 @@ export async function endSession(
       created_by: deviceId || null,
     })
 
-  // Check for unique constraint violation (session already ended)
   if (eventError) {
-    if (eventError.code === '23505') {
-      // Unique constraint - already has an END event
-      return { success: false, alreadyEnded: true }
-    }
     console.error(`[endSession] Failed to insert END event for session ${sessionId}`)
     console.error(`[endSession] Error code: ${eventError.code}, message: ${eventError.message}`)
     return { success: false, alreadyEnded: false, error: eventError.message }
