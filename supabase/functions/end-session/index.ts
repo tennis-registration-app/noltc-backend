@@ -45,7 +45,7 @@ serve(async (req) => {
     }
 
     // Validate end_reason if provided
-    const resolvedEndReason = end_reason || 'completed';
+    const resolvedEndReason = end_reason || 'cleared';
     if (!isValidEndReason(resolvedEndReason)) {
       return addCorsHeaders(
         errorResponse(

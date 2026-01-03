@@ -9,34 +9,53 @@
  * All session-ending code paths MUST use this helper to prevent inconsistency.
  */
 
-export type EndReason = 'completed' | 'cleared_early' | 'admin_override'
+export type EndReason = 'cleared' | 'observed_cleared' | 'admin_override' | 'overtime_takeover' | 'auto_cleared'
 
 /**
  * Map incoming end_reason strings to valid constraint values
- * Frontend may send: 'Cleared', 'Observed-Cleared', 'completed', 'admin', etc.
- * Database constraint requires: 'completed', 'cleared_early', 'admin_override'
+ * Frontend may send: 'Cleared', 'Observed-Cleared', 'cleared', 'admin', etc.
+ * Database constraint requires: 'cleared', 'observed_cleared', 'admin_override', 'overtime_takeover', 'auto_cleared'
  */
 export function normalizeEndReason(reason: string | undefined): EndReason {
-  if (!reason) return 'completed'
+  if (!reason) return 'cleared'
+
+  // If already a valid value, pass through
+  if (['cleared', 'observed_cleared', 'admin_override', 'overtime_takeover', 'auto_cleared'].includes(reason)) {
+    return reason as EndReason
+  }
 
   const normalized = reason.toLowerCase().trim()
 
-  // Map variations to valid constraint values
-  if (normalized.includes('clear') || normalized.includes('observed')) {
-    return 'cleared_early'
+  // Observer clear: "The players have left the court, I'm sure!"
+  if (normalized.includes('observed') || normalized.includes('empty')) {
+    return 'observed_cleared'
   }
+
+  // Player self-clear: "We finished and are leaving our court"
+  if (normalized.includes('clear') && !normalized.includes('observed')) {
+    return 'cleared'
+  }
+
+  // Admin clear
   if (normalized.includes('admin') || normalized.includes('force')) {
     return 'admin_override'
   }
-  if (normalized === 'completed' || normalized === 'time expired' || normalized === 'expired') {
-    return 'completed'
+
+  // Bumped by overtime takeover
+  if (normalized.includes('bump') || normalized.includes('takeover') || normalized.includes('overtime')) {
+    return 'overtime_takeover'
+  }
+
+  // Auto-cleared by timer
+  if (normalized === 'completed' || normalized.includes('time') || normalized.includes('expired') || normalized.includes('auto')) {
+    return 'auto_cleared'
   }
 
   // Regression guard: log unexpected values
-  console.warn(`[normalizeEndReason] Unexpected end_reason value: "${reason}", defaulting to 'completed'`)
+  console.warn(`[normalizeEndReason] Unexpected end_reason value: "${reason}", defaulting to 'cleared'`)
 
-  // Default to 'completed' for any unrecognized value
-  return 'completed'
+  // Default to 'cleared' for any unrecognized value
+  return 'cleared'
 }
 
 export interface EndSessionOptions {

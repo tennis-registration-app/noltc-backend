@@ -4,7 +4,7 @@
  * Use these instead of hardcoded strings to prevent mismatches.
  */
 
-export const END_REASONS = ['completed', 'cleared_early', 'admin_override'] as const;
+export const END_REASONS = ['cleared', 'observed_cleared', 'admin_override', 'overtime_takeover', 'auto_cleared'] as const;
 export type EndReason = (typeof END_REASONS)[number];
 
 export const WAITLIST_STATUSES = ['waiting', 'assigned', 'cancelled'] as const;
