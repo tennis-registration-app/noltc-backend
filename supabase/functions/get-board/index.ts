@@ -43,11 +43,35 @@ serve(async (req) => {
       );
     }
 
+    // Get upcoming blocks for today (not yet started, but scheduled for today)
+    const { data: upcomingBlocks, error: upcomingBlocksError } = await supabase.rpc(
+      'get_upcoming_blocks',
+      {
+        request_time: serverNow,
+      }
+    );
+
+    if (upcomingBlocksError) {
+      console.error('Upcoming blocks query error:', upcomingBlocksError);
+      // Non-fatal: continue without upcoming blocks
+    }
+
     // Get operating hours
     const { data: operatingHours } = await supabase
       .from('operating_hours')
       .select('*')
       .order('day_of_week');
+
+    // Transform upcoming blocks to camelCase for frontend
+    const transformedUpcomingBlocks = (upcomingBlocks || []).map((b: any) => ({
+      id: b.block_id,
+      courtId: b.court_id,
+      courtNumber: b.court_number,
+      blockType: b.block_type,
+      title: b.title,
+      startsAt: b.starts_at,
+      endsAt: b.ends_at,
+    }));
 
     return addCorsHeaders(
       successResponse(
@@ -55,6 +79,7 @@ serve(async (req) => {
           courts: courts || [],
           waitlist: waitlist || [],
           operatingHours: operatingHours || [],
+          upcomingBlocks: transformedUpcomingBlocks,
         },
         serverNow
       )
