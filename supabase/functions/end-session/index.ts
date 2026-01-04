@@ -107,6 +107,7 @@ serve(async (req) => {
 
       // End ALL sessions on this court
       let sessionsEnded = 0;
+      let cacheFailures: string[] = [];
       for (const session of activeSessions) {
         const result = await endSession(supabase, {
           sessionId: session.id,
@@ -117,9 +118,16 @@ serve(async (req) => {
         if (result.success || result.alreadyEnded) {
           sessionsEnded++;
         }
+        if (result.cacheOk === false) {
+          cacheFailures.push(session.id);
+          console.error(`[end-session] ⚠️ Cache inconsistency for session ${session.id}: ${result.cacheError}`);
+        }
       }
 
       console.log(`Ended ${sessionsEnded}/${activeSessions.length} sessions on court ${resolvedCourtId}`);
+      if (cacheFailures.length > 0) {
+        console.error(`[end-session] ⚠️ ${cacheFailures.length} session(s) have stale cache - needs repair`);
+      }
 
       // Signal board change
       await signalBoardChange(supabase, 'session');
@@ -129,6 +137,8 @@ serve(async (req) => {
           {
             sessionsEnded,
             message: sessionsEnded > 1 ? `Ended ${sessionsEnded} sessions` : 'Session ended',
+            cacheOk: cacheFailures.length === 0,
+            ...(cacheFailures.length > 0 && { cacheFailures }),
           },
           serverNow
         )
@@ -155,6 +165,11 @@ serve(async (req) => {
       );
     }
 
+    // Log cache inconsistency if present
+    if (result.cacheOk === false) {
+      console.error(`[end-session] ⚠️ Cache inconsistency for session ${targetSessionId}: ${result.cacheError}`);
+    }
+
     // Signal board change for real-time updates
     await signalBoardChange(supabase, 'session');
 
@@ -177,6 +192,8 @@ serve(async (req) => {
                 sessionType: session.session_type,
               }
             : null,
+          cacheOk: result.cacheOk !== false,
+          ...(result.cacheOk === false && { cacheError: result.cacheError }),
         },
         serverNow
       )

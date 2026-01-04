@@ -70,6 +70,8 @@ export interface EndSessionResult {
   success: boolean
   alreadyEnded: boolean
   error?: string
+  cacheOk?: boolean
+  cacheError?: string
 }
 
 /**
@@ -129,13 +131,14 @@ export async function endSession(
     .eq('id', sessionId)
 
   if (updateError) {
-    // Log but don't fail - the END event is already recorded (source of truth)
-    // The cleanup-sessions function can repair this inconsistency if needed
-    console.error(`[endSession] Warning: END event recorded but actual_end_at update failed`)
+    // Log loudly - the END event is recorded (source of truth) but cache is stale
+    // TODO: Option C - add cache repair mechanism
+    console.error(`[endSession] ⚠️ CACHE INCONSISTENCY: END event recorded but sessions.actual_end_at update failed`)
     console.error(`[endSession] Session ${sessionId}: ${updateError.message}`)
+    return { success: true, alreadyEnded: false, cacheOk: false, cacheError: updateError.message }
   }
 
-  return { success: true, alreadyEnded: false }
+  return { success: true, alreadyEnded: false, cacheOk: true }
 }
 
 /**
