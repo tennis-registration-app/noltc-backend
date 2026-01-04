@@ -222,6 +222,9 @@ serve(async (req) => {
         if (!timeRegex.test(override.closes_at)) {
           throw new Error(`Invalid closes_at time format: ${override.closes_at}`)
         }
+        if (override.opens_at >= override.closes_at) {
+          throw new Error(`opens_at (${override.opens_at}) must be before closes_at (${override.closes_at})`)
+        }
       }
 
       // Upsert the override

@@ -19,7 +19,7 @@ serve(async (req) => {
     // Get system settings
     const { data: settings, error: settingsError } = await supabase
       .from('system_settings')
-      .select('key, value')
+      .select('key, value, updated_at')
 
     if (settingsError) {
       throw new Error(`Failed to fetch settings: ${settingsError.message}`)
@@ -68,6 +68,11 @@ serve(async (req) => {
     settingsObj.guest_fee_weekday_dollars = (settingsObj.guest_fee_weekday_cents / 100).toFixed(2)
     settingsObj.guest_fee_weekend_dollars = (settingsObj.guest_fee_weekend_cents / 100).toFixed(2)
 
+    // Track most recent settings update for concurrency detection
+    const settingsUpdatedAt = settings?.reduce((latest, s) => {
+      return s.updated_at > latest ? s.updated_at : latest
+    }, '1970-01-01T00:00:00Z')
+
     // Format operating hours
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const formattedHours = hours?.map(h => ({
@@ -81,6 +86,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       ok: true,
       settings: settingsObj,
+      settings_updated_at: settingsUpdatedAt,
       operating_hours: formattedHours,
       upcoming_overrides: overrides,
     }), {
