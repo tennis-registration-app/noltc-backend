@@ -92,52 +92,36 @@ export async function endSession(
   supabase: any,
   options: EndSessionOptions
 ): Promise<EndSessionResult> {
-  const { sessionId, serverNow, endReason: rawEndReason, deviceId, eventData } = options
+  const { sessionId, serverNow, endReason: rawEndReason, deviceId } = options
 
   // Normalize end_reason to valid constraint value
   const endReason = normalizeEndReason(rawEndReason)
 
-  // Step 1: Insert END event (source of truth)
-  // Note: Multiple END events are allowed for sessions that were restored.
-  // The active_sessions_view handles this by checking if the most recent
-  // RESTORE is newer than the most recent END.
-  const { error: eventError } = await supabase
-    .from('session_events')
-    .insert({
-      session_id: sessionId,
-      event_type: 'END',
-      event_data: {
-        reason: endReason,
-        ended_at: serverNow,
-        ended_by: deviceId || null,
-        ...eventData,
-      },
-      created_by: deviceId || null,
-    })
+  // Use atomic RPC - wraps END event insert + cache update in single transaction
+  const { data, error } = await supabase.rpc('end_session_atomic', {
+    p_session_id: sessionId,
+    p_end_reason: endReason,
+    p_device_id: deviceId || null,
+    p_server_now: serverNow,
+  })
 
-  if (eventError) {
-    console.error(`[endSession] Failed to insert END event for session ${sessionId}`)
-    console.error(`[endSession] Error code: ${eventError.code}, message: ${eventError.message}`)
-    return { success: false, alreadyEnded: false, error: eventError.message }
+  if (error) {
+    console.error(`[endSession] RPC call failed for session ${sessionId}`)
+    console.error(`[endSession] Error: ${error.message}`)
+    return { success: false, alreadyEnded: false, error: error.message }
   }
 
-  // Step 2: Update sessions.actual_end_at (denormalized cache)
-  const { error: updateError } = await supabase
-    .from('sessions')
-    .update({
-      actual_end_at: serverNow,
-      end_reason: endReason,
-    })
-    .eq('id', sessionId)
-
-  if (updateError) {
-    // Log loudly - the END event is recorded (source of truth) but cache is stale
-    // TODO: Option C - add cache repair mechanism
-    console.error(`[endSession] ⚠️ CACHE INCONSISTENCY: END event recorded but sessions.actual_end_at update failed`)
-    console.error(`[endSession] Session ${sessionId}: ${updateError.message}`)
-    return { success: true, alreadyEnded: false, cacheOk: false, cacheError: updateError.message }
+  // RPC returns JSONB: {success, already_ended, error?, court_id?}
+  if (data.already_ended) {
+    return { success: false, alreadyEnded: true }
   }
 
+  if (!data.success) {
+    console.error(`[endSession] RPC returned failure for session ${sessionId}: ${data.error}`)
+    return { success: false, alreadyEnded: false, error: data.error }
+  }
+
+  // Atomic success - both event and cache updated in single transaction
   return { success: true, alreadyEnded: false, cacheOk: true }
 }
 
