@@ -13,6 +13,7 @@ serve(async (req) => {
   }
 
   try {
+    console.log("🔥 ADMIN-END-SESSION endpoint hit v2026-01-04-1")
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
