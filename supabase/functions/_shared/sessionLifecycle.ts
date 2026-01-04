@@ -97,9 +97,6 @@ export async function endSession(
   // Normalize end_reason to valid constraint value
   const endReason = normalizeEndReason(rawEndReason)
 
-  console.log("🔥 endSession() USING RPC end_session_atomic v2026-01-04-1")
-  console.log(`🔥 Params: sessionId=${sessionId}, endReason=${endReason}, deviceId=${deviceId}`)
-
   // Use atomic RPC - wraps END event insert + cache update in single transaction
   const { data, error } = await supabase.rpc('end_session_atomic', {
     p_session_id: sessionId,
@@ -107,8 +104,6 @@ export async function endSession(
     p_device_id: deviceId || null,
     p_server_now: serverNow,
   })
-
-  console.log("🔥 RPC result:", JSON.stringify({ data, error }))
 
   if (error) {
     console.error(`[endSession] RPC call failed for session ${sessionId}`)

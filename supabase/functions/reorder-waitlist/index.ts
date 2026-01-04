@@ -13,8 +13,6 @@ serve(async (req) => {
   }
 
   try {
-    console.log("🔥 REORDER-WAITLIST endpoint hit")
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
@@ -72,8 +70,6 @@ serve(async (req) => {
       p_new_position: new_position,
       p_device_id: device_id,
     })
-
-    console.log("🔥 RPC result:", JSON.stringify({ data, error }))
 
     if (error) {
       return new Response(
