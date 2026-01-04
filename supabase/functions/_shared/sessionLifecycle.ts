@@ -92,7 +92,7 @@ export async function endSession(
   supabase: any,
   options: EndSessionOptions
 ): Promise<EndSessionResult> {
-  const { sessionId, serverNow, endReason: rawEndReason, deviceId } = options
+  const { sessionId, serverNow, endReason: rawEndReason, deviceId, eventData } = options
 
   // Normalize end_reason to valid constraint value
   const endReason = normalizeEndReason(rawEndReason)
@@ -103,6 +103,7 @@ export async function endSession(
     p_end_reason: endReason,
     p_device_id: deviceId || null,
     p_server_now: serverNow,
+    p_event_data: eventData || {},
   })
 
   if (error) {
