@@ -24,6 +24,72 @@ interface JoinWaitlistRequest {
   longitude?: number
 }
 
+// Denial codes for expected business rule failures (HTTP 200)
+type DenialCode =
+  | 'INVALID_GROUP_TYPE'
+  | 'NO_PARTICIPANTS'
+  | 'INVALID_PARTICIPANT_COUNT'
+  | 'INVALID_PARTICIPANT'
+  | 'MISSING_DEVICE_ID'
+  | 'DEVICE_NOT_REGISTERED'
+  | 'CLUB_CLOSED'
+  | 'OUTSIDE_HOURS'
+  | 'LOCATION_REQUIRED'
+  | 'GEOFENCE_FAILED'
+  | 'ALREADY_ON_WAITLIST'
+  | 'WAITLIST_CREATE_FAILED'
+  | 'PARTICIPANTS_CREATE_FAILED'
+
+/**
+ * Standard success response with CORS
+ */
+function successResponse(data: Record<string, unknown>, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    code: 'OK',
+    message: '',
+    serverNow,
+    data,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Standard denial response (expected business rule failure) with CORS
+ * Returns HTTP 200 - this is an expected denial, not an error
+ */
+function denialResponse(code: DenialCode, message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code,
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Internal error response (unexpected failure) with CORS
+ * Returns HTTP 500
+ */
+function internalErrorResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'INTERNAL_ERROR',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 500,
+  })
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -47,32 +113,36 @@ serve(async (req) => {
     // ===========================================
 
     if (!requestData.group_type || !['singles', 'doubles'].includes(requestData.group_type)) {
-      throw new Error('group_type must be "singles" or "doubles"')
+      return denialResponse('INVALID_GROUP_TYPE', 'group_type must be "singles" or "doubles"', serverNow)
     }
     if (!requestData.participants || requestData.participants.length === 0) {
-      throw new Error('At least one participant is required')
+      return denialResponse('NO_PARTICIPANTS', 'At least one participant is required', serverNow)
     }
     if (!requestData.device_id) {
-      throw new Error('device_id is required')
+      return denialResponse('MISSING_DEVICE_ID', 'device_id is required', serverNow)
     }
 
     // Validate participant count for group type
     const minPlayers = requestData.group_type === 'singles' ? 1 : 2
     const maxPlayers = requestData.group_type === 'singles' ? 2 : 4
     if (requestData.participants.length < minPlayers || requestData.participants.length > maxPlayers) {
-      throw new Error(`${requestData.group_type} requires ${minPlayers}-${maxPlayers} participants`)
+      return denialResponse(
+        'INVALID_PARTICIPANT_COUNT',
+        `${requestData.group_type} requires ${minPlayers}-${maxPlayers} participants`,
+        serverNow
+      )
     }
 
     // Validate each participant
     for (const p of requestData.participants) {
       if (p.type === 'member' && !p.member_id) {
-        throw new Error('member_id required for member participants')
+        return denialResponse('INVALID_PARTICIPANT', 'member_id required for member participants', serverNow)
       }
       if (p.type === 'guest' && !p.guest_name) {
-        throw new Error('guest_name required for guest participants')
+        return denialResponse('INVALID_PARTICIPANT', 'guest_name required for guest participants', serverNow)
       }
       if (!p.account_id) {
-        throw new Error('account_id required for all participants')
+        return denialResponse('INVALID_PARTICIPANT', 'account_id required for all participants', serverNow)
       }
     }
 
@@ -102,7 +172,7 @@ serve(async (req) => {
 
     if (override) {
       if (override.is_closed) {
-        throw new Error('The club is closed today')
+        return denialResponse('CLUB_CLOSED', 'The club is closed today', serverNow)
       }
       opensAt = override.opens_at
       closesAt = override.closes_at
@@ -114,21 +184,21 @@ serve(async (req) => {
         .single()
 
       if (hoursError || !hoursData) {
-        throw new Error('Could not determine operating hours')
+        return internalErrorResponse('Could not determine operating hours', serverNow)
       }
 
       if (hoursData.is_closed) {
-        throw new Error('The club is closed today')
+        return denialResponse('CLUB_CLOSED', 'The club is closed today', serverNow)
       }
       opensAt = hoursData.opens_at
       closesAt = hoursData.closes_at
     }
 
     if (currentTime < opensAt) {
-      throw new Error(`Registration opens at ${opensAt.slice(0, 5)}`)
+      return denialResponse('OUTSIDE_HOURS', `Registration opens at ${opensAt.slice(0, 5)}`, serverNow)
     }
     if (currentTime >= closesAt) {
-      throw new Error(`Registration is closed for today (closed at ${closesAt.slice(0, 5)})`)
+      return denialResponse('OUTSIDE_HOURS', `Registration is closed for today (closed at ${closesAt.slice(0, 5)})`, serverNow)
     }
 
     // ===========================================
@@ -142,7 +212,7 @@ serve(async (req) => {
       .single()
 
     if (deviceError || !device) {
-      throw new Error('Device not registered')
+      return denialResponse('DEVICE_NOT_REGISTERED', 'Device not registered', serverNow)
     }
 
     await supabase
@@ -158,7 +228,7 @@ serve(async (req) => {
 
     if (device.device_type === 'mobile') {
       if (!requestData.latitude || !requestData.longitude) {
-        throw new Error('Location required for mobile registration')
+        return denialResponse('LOCATION_REQUIRED', 'Location required for mobile registration', serverNow)
       }
 
       const geofenceResult = await validateGeofence(
@@ -190,7 +260,7 @@ serve(async (req) => {
           ip_address: req.headers.get('x-forwarded-for') || 'unknown',
         })
 
-        throw new Error(geofenceResult.message)
+        return denialResponse('GEOFENCE_FAILED', geofenceResult.message, serverNow)
       }
     }
 
@@ -213,7 +283,7 @@ serve(async (req) => {
         .eq('waitlist.status', 'waiting')
 
       if (existingEntries && existingEntries.length > 0) {
-        throw new Error('One or more members are already on the waitlist')
+        return denialResponse('ALREADY_ON_WAITLIST', 'One or more members are already on the waitlist', serverNow)
       }
     }
 
@@ -248,7 +318,8 @@ serve(async (req) => {
       .single()
 
     if (waitlistError || !waitlistEntry) {
-      throw new Error(`Failed to create waitlist entry: ${waitlistError?.message}`)
+      console.error('Failed to create waitlist entry:', waitlistError)
+      return internalErrorResponse(`Failed to create waitlist entry: ${waitlistError?.message}`, serverNow)
     }
 
     waitlistId = waitlistEntry.id
@@ -270,7 +341,8 @@ serve(async (req) => {
       .insert(participantRecords)
 
     if (participantsError) {
-      throw new Error(`Failed to add participants: ${participantsError.message}`)
+      console.error('Failed to add participants:', participantsError)
+      return internalErrorResponse(`Failed to add participants: ${participantsError.message}`, serverNow)
     }
 
     // ===========================================
@@ -324,9 +396,7 @@ serve(async (req) => {
       .from("board_change_signals")
       .insert({ change_type: "waitlist" });
 
-    return new Response(JSON.stringify({
-      ok: true,
-      serverNow,
+    return successResponse({
       waitlist: {
         id: waitlistEntry.id,
         group_type: waitlistEntry.group_type,
@@ -335,13 +405,10 @@ serve(async (req) => {
         joined_at: waitlistEntry.joined_at,
         participants: participantNames,
       },
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    }, serverNow)
 
   } catch (error) {
-    // Audit log - failure
+    // Audit log - failure (unexpected error)
     await supabase
       .from('audit_log')
       .insert({
@@ -357,13 +424,7 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
-    return new Response(JSON.stringify({
-      ok: false,
-      serverNow,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    console.error('Unexpected error in join-waitlist:', error)
+    return internalErrorResponse(error.message, serverNow)
   }
 })

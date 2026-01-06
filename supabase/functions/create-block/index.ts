@@ -19,6 +19,91 @@ interface CreateBlockRequest {
   initiated_by?: 'user' | 'ai_assistant'
 }
 
+// Denial codes for expected business rule failures (HTTP 200)
+type DenialCode =
+  | 'MISSING_COURT_ID'
+  | 'INVALID_BLOCK_TYPE'
+  | 'MISSING_TITLE'
+  | 'MISSING_STARTS_AT'
+  | 'MISSING_ENDS_AT'
+  | 'MISSING_DEVICE_ID'
+  | 'INVALID_STARTS_AT'
+  | 'INVALID_ENDS_AT'
+  | 'INVALID_DATE_RANGE'
+  | 'MISSING_RECURRENCE_RULE'
+  | 'DEVICE_NOT_REGISTERED'
+  | 'UNAUTHORIZED'
+  | 'COURT_NOT_FOUND'
+  | 'OVERLAPPING_BLOCK'
+  | 'ACTIVE_SESSION'
+
+/**
+ * Standard success response with CORS
+ */
+function successResponse(data: Record<string, unknown>, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    code: 'OK',
+    message: '',
+    serverNow,
+    data,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Standard denial response (expected business rule failure) with CORS
+ * Returns HTTP 200 - this is an expected denial, not an error
+ */
+function denialResponse(code: DenialCode, message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code,
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Authorization failure response with CORS
+ * Returns HTTP 403
+ */
+function forbiddenResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'UNAUTHORIZED',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 403,
+  })
+}
+
+/**
+ * Internal error response (unexpected failure) with CORS
+ * Returns HTTP 500
+ */
+function internalErrorResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'INTERNAL_ERROR',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 500,
+  })
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -42,22 +127,22 @@ serve(async (req) => {
     // ===========================================
 
     if (!requestData.court_id) {
-      throw new Error('court_id is required')
+      return denialResponse('MISSING_COURT_ID', 'court_id is required', serverNow)
     }
     if (!requestData.block_type || !['lesson', 'clinic', 'maintenance', 'wet', 'other'].includes(requestData.block_type)) {
-      throw new Error('block_type must be "lesson", "clinic", "maintenance", "wet", or "other"')
+      return denialResponse('INVALID_BLOCK_TYPE', 'block_type must be "lesson", "clinic", "maintenance", "wet", or "other"', serverNow)
     }
     if (!requestData.title || requestData.title.trim() === '') {
-      throw new Error('title is required')
+      return denialResponse('MISSING_TITLE', 'title is required', serverNow)
     }
     if (!requestData.starts_at) {
-      throw new Error('starts_at is required')
+      return denialResponse('MISSING_STARTS_AT', 'starts_at is required', serverNow)
     }
     if (!requestData.ends_at) {
-      throw new Error('ends_at is required')
+      return denialResponse('MISSING_ENDS_AT', 'ends_at is required', serverNow)
     }
     if (!requestData.device_id) {
-      throw new Error('device_id is required')
+      return denialResponse('MISSING_DEVICE_ID', 'device_id is required', serverNow)
     }
 
     // Validate dates
@@ -65,18 +150,18 @@ serve(async (req) => {
     const endsAt = new Date(requestData.ends_at)
 
     if (isNaN(startsAt.getTime())) {
-      throw new Error('starts_at is not a valid date')
+      return denialResponse('INVALID_STARTS_AT', 'starts_at is not a valid date', serverNow)
     }
     if (isNaN(endsAt.getTime())) {
-      throw new Error('ends_at is not a valid date')
+      return denialResponse('INVALID_ENDS_AT', 'ends_at is not a valid date', serverNow)
     }
     if (endsAt <= startsAt) {
-      throw new Error('ends_at must be after starts_at')
+      return denialResponse('INVALID_DATE_RANGE', 'ends_at must be after starts_at', serverNow)
     }
 
     // Validate recurrence
     if (requestData.is_recurring && !requestData.recurrence_rule) {
-      throw new Error('recurrence_rule is required when is_recurring is true')
+      return denialResponse('MISSING_RECURRENCE_RULE', 'recurrence_rule is required when is_recurring is true', serverNow)
     }
 
     // ===========================================
@@ -90,7 +175,7 @@ serve(async (req) => {
       .single()
 
     if (deviceError || !device) {
-      throw new Error('Device not registered')
+      return denialResponse('DEVICE_NOT_REGISTERED', 'Device not registered', serverNow)
     }
 
     // Update device last_seen_at
@@ -124,15 +209,7 @@ serve(async (req) => {
           ip_address: req.headers.get('x-forwarded-for') || 'unknown',
         })
 
-      return new Response(JSON.stringify({
-        ok: false,
-        code: 'UNAUTHORIZED',
-        message: 'Admin access required to create court blocks',
-        serverNow,
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 403,
-      })
+      return forbiddenResponse('Admin access required to create court blocks', serverNow)
     }
 
     // ===========================================
@@ -146,7 +223,7 @@ serve(async (req) => {
       .single()
 
     if (courtError || !court) {
-      throw new Error('Court not found')
+      return denialResponse('COURT_NOT_FOUND', 'Court not found', serverNow)
     }
 
     // ===========================================
@@ -163,7 +240,7 @@ serve(async (req) => {
 
     if (overlappingBlocks && overlappingBlocks.length > 0) {
       const existing = overlappingBlocks[0]
-      throw new Error(`Overlaps with existing block: "${existing.title}"`)
+      return denialResponse('OVERLAPPING_BLOCK', `Overlaps with existing block: "${existing.title}"`, serverNow)
     }
 
     // ===========================================
@@ -181,7 +258,7 @@ serve(async (req) => {
         .single()
 
       if (activeSession) {
-        throw new Error('Court has an active session. End the session before blocking.')
+        return denialResponse('ACTIVE_SESSION', 'Court has an active session. End the session before blocking.', serverNow)
       }
     }
 
@@ -205,7 +282,8 @@ serve(async (req) => {
       .single()
 
     if (blockError || !block) {
-      throw new Error(`Failed to create block: ${blockError?.message}`)
+      console.error('Failed to create block:', blockError)
+      return internalErrorResponse(`Failed to create block: ${blockError?.message}`, serverNow)
     }
 
     blockId = block.id
@@ -247,9 +325,7 @@ serve(async (req) => {
       .from("board_change_signals")
       .insert({ change_type: "block" });
 
-    return new Response(JSON.stringify({
-      ok: true,
-      serverNow,
+    return successResponse({
       block: {
         id: block.id,
         court_id: block.court_id,
@@ -263,10 +339,7 @@ serve(async (req) => {
         is_recurring: block.is_recurring,
         recurrence_rule: block.recurrence_rule,
       },
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    }, serverNow)
 
   } catch (error) {
     // Audit log - failure
@@ -285,13 +358,7 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
-    return new Response(JSON.stringify({
-      ok: false,
-      serverNow,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    console.error('Unexpected error in create-block:', error)
+    return internalErrorResponse(error.message, serverNow)
   }
 })

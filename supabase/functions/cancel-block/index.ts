@@ -13,6 +13,81 @@ interface CancelBlockRequest {
   initiated_by?: 'user' | 'ai_assistant'
 }
 
+// Denial codes for expected business rule failures (HTTP 200)
+type DenialCode =
+  | 'MISSING_BLOCK_ID'
+  | 'MISSING_DEVICE_ID'
+  | 'DEVICE_NOT_REGISTERED'
+  | 'BLOCK_NOT_FOUND'
+  | 'ALREADY_CANCELLED'
+
+/**
+ * Standard success response with CORS
+ */
+function successResponse(data: Record<string, unknown>, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    code: 'OK',
+    message: '',
+    serverNow,
+    data,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Standard denial response (expected business rule failure) with CORS
+ * Returns HTTP 200 - this is an expected denial, not an error
+ */
+function denialResponse(code: DenialCode, message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code,
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Authorization failure response with CORS
+ * Returns HTTP 403
+ */
+function forbiddenResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'UNAUTHORIZED',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 403,
+  })
+}
+
+/**
+ * Internal error response (unexpected failure) with CORS
+ * Returns HTTP 500
+ */
+function internalErrorResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'INTERNAL_ERROR',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 500,
+  })
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -35,10 +110,10 @@ serve(async (req) => {
     // ===========================================
 
     if (!requestData.block_id) {
-      throw new Error('block_id is required')
+      return denialResponse('MISSING_BLOCK_ID', 'block_id is required', serverNow)
     }
     if (!requestData.device_id) {
-      throw new Error('device_id is required')
+      return denialResponse('MISSING_DEVICE_ID', 'device_id is required', serverNow)
     }
 
     // ===========================================
@@ -52,7 +127,7 @@ serve(async (req) => {
       .single()
 
     if (deviceError || !device) {
-      throw new Error('Device not registered')
+      return denialResponse('DEVICE_NOT_REGISTERED', 'Device not registered', serverNow)
     }
 
     // Update device last_seen_at
@@ -84,15 +159,7 @@ serve(async (req) => {
           ip_address: req.headers.get('x-forwarded-for') || 'unknown',
         })
 
-      return new Response(JSON.stringify({
-        ok: false,
-        code: 'UNAUTHORIZED',
-        message: 'Admin access required to cancel court blocks',
-        serverNow,
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 403,
-      })
+      return forbiddenResponse('Admin access required to cancel court blocks', serverNow)
     }
 
     // ===========================================
@@ -106,11 +173,11 @@ serve(async (req) => {
       .single()
 
     if (blockError || !block) {
-      throw new Error('Block not found')
+      return denialResponse('BLOCK_NOT_FOUND', 'Block not found', serverNow)
     }
 
     if (block.cancelled_at) {
-      throw new Error('Block is already cancelled')
+      return denialResponse('ALREADY_CANCELLED', 'Block is already cancelled', serverNow)
     }
 
     // ===========================================
@@ -125,7 +192,8 @@ serve(async (req) => {
       .eq('id', requestData.block_id)
 
     if (updateError) {
-      throw new Error(`Failed to cancel block: ${updateError.message}`)
+      console.error('Failed to cancel block:', updateError)
+      return internalErrorResponse(`Failed to cancel block: ${updateError.message}`, serverNow)
     }
 
     // ===========================================
@@ -154,16 +222,14 @@ serve(async (req) => {
 
     // ===========================================
     // RETURN SUCCESS
+    // ===========================================
 
     // Insert board change signal for real-time updates
     await supabase
       .from("board_change_signals")
       .insert({ change_type: "block" });
-    // ===========================================
 
-    return new Response(JSON.stringify({
-      ok: true,
-      serverNow,
+    return successResponse({
       block: {
         id: block.id,
         court_id: block.court_id,
@@ -175,10 +241,7 @@ serve(async (req) => {
         ends_at: block.ends_at,
         cancelled_at: cancelledAt,
       },
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    }, serverNow)
 
   } catch (error) {
     // Audit log - failure
@@ -197,13 +260,7 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
-    return new Response(JSON.stringify({
-      ok: false,
-      serverNow,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    console.error('Unexpected error in cancel-block:', error)
+    return internalErrorResponse(error.message, serverNow)
   }
 })

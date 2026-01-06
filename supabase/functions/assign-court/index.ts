@@ -8,6 +8,7 @@ import {
   successResponse,
   errorResponse,
   conflictResponse,
+  internalErrorResponse,
 } from "../_shared/index.ts"
 
 const corsHeaders = {
@@ -727,8 +728,9 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
+    console.error('Unexpected error in assign-court:', error)
     return addCorsHeaders(
-      errorResponse('ASSIGN_COURT_FAILED', error.message, serverNow)
+      internalErrorResponse(error.message, serverNow)
     )
   }
 })

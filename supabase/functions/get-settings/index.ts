@@ -6,6 +6,39 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+/**
+ * Standard success response with CORS
+ */
+function successResponse(data: Record<string, unknown>, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    code: 'OK',
+    message: '',
+    serverNow,
+    data,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200,
+  })
+}
+
+/**
+ * Internal error response (unexpected failure) with CORS
+ * Returns HTTP 500
+ */
+function internalErrorResponse(message: string, serverNow: string): Response {
+  return new Response(JSON.stringify({
+    ok: false,
+    code: 'INTERNAL_ERROR',
+    message,
+    serverNow,
+    data: null,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 500,
+  })
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -15,6 +48,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+  // Consistent timestamp for the entire request
+  const serverNow = new Date().toISOString()
+
   try {
     // Get system settings
     const { data: settings, error: settingsError } = await supabase
@@ -22,7 +58,8 @@ serve(async (req) => {
       .select('key, value, updated_at')
 
     if (settingsError) {
-      throw new Error(`Failed to fetch settings: ${settingsError.message}`)
+      console.error('Failed to fetch settings:', settingsError)
+      return internalErrorResponse(`Failed to fetch settings: ${settingsError.message}`, serverNow)
     }
 
     // Get operating hours
@@ -32,7 +69,8 @@ serve(async (req) => {
       .order('day_of_week')
 
     if (hoursError) {
-      throw new Error(`Failed to fetch operating hours: ${hoursError.message}`)
+      console.error('Failed to fetch operating hours:', hoursError)
+      return internalErrorResponse(`Failed to fetch operating hours: ${hoursError.message}`, serverNow)
     }
 
     // Get upcoming overrides (next 30 days)
@@ -47,7 +85,8 @@ serve(async (req) => {
       .order('date')
 
     if (overridesError) {
-      throw new Error(`Failed to fetch overrides: ${overridesError.message}`)
+      console.error('Failed to fetch overrides:', overridesError)
+      return internalErrorResponse(`Failed to fetch overrides: ${overridesError.message}`, serverNow)
     }
 
     // Format settings as object
@@ -83,24 +122,15 @@ serve(async (req) => {
       is_closed: h.is_closed,
     }))
 
-    return new Response(JSON.stringify({
-      ok: true,
+    return successResponse({
       settings: settingsObj,
       settings_updated_at: settingsUpdatedAt,
       operating_hours: formattedHours,
       upcoming_overrides: overrides,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    }, serverNow)
 
   } catch (error) {
-    return new Response(JSON.stringify({
-      ok: false,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    console.error('Unexpected error in get-settings:', error)
+    return internalErrorResponse(error.message, serverNow)
   }
 })
