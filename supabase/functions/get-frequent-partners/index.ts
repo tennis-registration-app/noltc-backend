@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,64 +11,48 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
   try {
-    const { member_number } = await req.json()
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-    if (!member_number) {
+    const { member_id } = await req.json()
+
+    if (!member_id) {
       return new Response(
-        JSON.stringify({ ok: false, error: 'member_number is required' }),
+        JSON.stringify({ ok: false, error: 'member_id is required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
 
-    // Look up account by member_number
-    const { data: accountData, error: accountError } = await supabase
-      .from('accounts')
-      .select('id')
-      .eq('member_number', member_number)
+    // Read from cache (fast lookup)
+    const { data: cacheRow, error: cacheError } = await supabaseClient
+      .from('frequent_partners_cache')
+      .select('partners, computed_at')
+      .eq('member_id', member_id)
       .single()
 
-    if (accountError || !accountData) {
+    if (cacheError && cacheError.code !== 'PGRST116') {
+      // PGRST116 = row not found, which is OK
+      throw cacheError
+    }
+
+    if (cacheRow) {
+      // Cache hit - return cached partners
       return new Response(
-        JSON.stringify({ ok: true, partners: [] }),
+        JSON.stringify({
+          ok: true,
+          partners: cacheRow.partners || [],
+          cached_at: cacheRow.computed_at
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Get primary member for this account
-    const { data: member, error: memberError } = await supabase
-      .from('members')
-      .select('id')
-      .eq('account_id', accountData.id)
-      .eq('is_primary', true)
-      .single()
-
-    if (memberError || !member) {
-      return new Response(
-        JSON.stringify({ ok: true, partners: [] }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Call the SQL function to get frequent partners
-    const { data, error } = await supabase.rpc('get_frequent_partners', {
-      p_member_id: member.id
-    })
-
-    if (error) {
-      throw new Error(`Failed to get frequent partners: ${error.message}`)
-    }
-
+    // Cache miss - new or inactive member, return empty
     return new Response(
-      JSON.stringify({
-        ok: true,
-        partners: data || [],
-        count: data?.length || 0
-      }),
+      JSON.stringify({ ok: true, partners: [], cached_at: null }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 

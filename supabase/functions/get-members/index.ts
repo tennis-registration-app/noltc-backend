@@ -30,9 +30,14 @@ serve(async (req) => {
         is_primary,
         status,
         account_id,
+        plays_180d,
+        last_played_at,
         accounts(member_number, account_name)
       `)
       .eq('status', 'active')
+      // Sort by play frequency (most active first), then by name
+      .order('plays_180d', { ascending: false })
+      .order('last_played_at', { ascending: false, nullsFirst: false })
       .order('display_name')
 
     // Apply filters
@@ -78,6 +83,7 @@ serve(async (req) => {
       account_id: m.account_id,
       member_number: m.accounts?.member_number,
       account_name: m.accounts?.account_name,
+      plays_180d: m.plays_180d,
     }))
 
     return new Response(JSON.stringify({
