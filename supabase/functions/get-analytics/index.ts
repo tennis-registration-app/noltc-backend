@@ -37,6 +37,20 @@ serve(async (req) => {
     )
     if (heatmapError) throw heatmapError
 
+    // Fetch waitlist stats
+    const { data: waitlistData, error: waitlistError } = await supabaseClient.rpc(
+      'get_waitlist_stats',
+      { start_date: startDate, end_date: endDate }
+    )
+    if (waitlistError) throw waitlistError
+
+    // Fetch waitlist heatmap
+    const { data: waitlistHeatmapData, error: waitlistHeatmapError } = await supabaseClient.rpc(
+      'get_waitlist_heatmap',
+      { start_date: startDate, end_date: endDate }
+    )
+    if (waitlistHeatmapError) throw waitlistHeatmapError
+
     // Transform summary (it returns an array with one row)
     const s = summaryData?.[0] || {}
 
@@ -60,6 +74,20 @@ serve(async (req) => {
         dow: h.day_of_week,
         hour: h.hour,
         count: h.session_count
+      })),
+      waitlist: (waitlistData || []).map((w: { id: string; group_type: string; joined_at: string; assigned_at: string; minutes_waited: number; player_names: string[] }) => ({
+        id: w.id,
+        groupType: w.group_type,
+        joinedAt: w.joined_at,
+        assignedAt: w.assigned_at,
+        minutesWaited: w.minutes_waited,
+        playerNames: w.player_names
+      })),
+      waitlistHeatmap: (waitlistHeatmapData || []).map((w: { day_of_week: number; hour: number; group_count: number; avg_wait_minutes: number }) => ({
+        dow: w.day_of_week,
+        hour: w.hour,
+        count: w.group_count,
+        avgWait: w.avg_wait_minutes
       }))
     }
 
