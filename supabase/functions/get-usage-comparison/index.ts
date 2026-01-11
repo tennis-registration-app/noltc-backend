@@ -80,9 +80,9 @@ serve(async (req) => {
     const body: UsageComparisonRequest = await req.json();
     const { metric, primaryStart, primaryEnd, granularity, comparisonStart } = body;
 
-    if (metric !== "usage") {
+    if (metric !== "usage" && metric !== "waittime") {
       return new Response(
-        JSON.stringify({ error: "Only 'usage' metric is currently supported. Wait time coming in Phase 2." }),
+        JSON.stringify({ error: "Invalid metric. Must be 'usage' or 'waittime'." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -102,8 +102,11 @@ serve(async (req) => {
     const primaryStartTs = toStartOfDayCentral(primaryStart);
     const primaryEndTs = toEndOfDayCentral(primaryEnd);
 
+    // Choose SQL function based on metric
+    const sqlFunction = metric === "usage" ? "get_usage_by_period" : "get_waittime_by_period";
+
     const { data: primaryData, error: primaryError } = await supabase
-      .rpc("get_usage_by_period", {
+      .rpc(sqlFunction, {
         p_start_ts: primaryStartTs,
         p_end_ts: primaryEndTs,
         p_granularity: effectiveGranularity,
@@ -126,8 +129,8 @@ serve(async (req) => {
     }));
 
     const response: UsageComparisonResponse = {
-      metric: "usage",
-      unit: "hours",
+      metric: metric,
+      unit: metric === "usage" ? "hours" : "minutes",
       granularity: effectiveGranularity,
       primary: {
         startDate: primaryStart,
@@ -144,7 +147,7 @@ serve(async (req) => {
       const comparisonEndTs = toEndOfDayCentral(comparisonEnd);
 
       const { data: comparisonData, error: comparisonError } = await supabase
-        .rpc("get_usage_by_period", {
+        .rpc(sqlFunction, {
           p_start_ts: comparisonStartTs,
           p_end_ts: comparisonEndTs,
           p_granularity: effectiveGranularity,
