@@ -73,15 +73,13 @@ serve(async (req) => {
       return internalErrorResponse(`Failed to fetch operating hours: ${hoursError.message}`, serverNow)
     }
 
-    // Get upcoming overrides (next 30 days)
+    // Get all future overrides (no upper limit - admin needs to see holidays scheduled far in advance)
     const today = new Date().toISOString().slice(0, 10)
-    const thirtyDaysLater = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 
     const { data: overrides, error: overridesError } = await supabase
       .from('operating_hours_overrides')
       .select('*')
       .gte('date', today)
-      .lte('date', thirtyDaysLater)
       .order('date')
 
     if (overridesError) {

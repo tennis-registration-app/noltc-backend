@@ -6,6 +6,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Convert UTC timestamp to Central Time for display
+function formatCentralTime(utcTimestamp: string): { date: string, time: string } {
+  const utc = new Date(utcTimestamp);
+  const formatted = utc.toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  // formatted: "01/10/2026, 20:09"
+  const [datePart, timePart] = formatted.split(', ');
+  const [month, day, year] = datePart.split('/');
+  return {
+    date: `${year}-${month}-${day}`,  // "2026-01-10"
+    time: timePart                      // "20:09"
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -88,18 +109,21 @@ serve(async (req) => {
     summary.ball_purchases.total_dollars = (summary.ball_purchases.total_cents / 100).toFixed(2)
     summary.reversals.total_dollars = (summary.reversals.total_cents / 100).toFixed(2)
 
-    const formattedTransactions = transactions?.map(t => ({
-      id: t.id,
-      date: t.created_at.split('T')[0],
-      time: t.created_at.split('T')[1].slice(0, 5),
-      type: t.transaction_type,
-      amount_cents: t.amount_cents,
-      amount_dollars: (t.amount_cents / 100).toFixed(2),
-      description: t.description,
-      member_number: t.accounts?.member_number,
-      account_name: t.accounts?.account_name,
-      session_id: t.session_id,
-    }))
+    const formattedTransactions = transactions?.map(t => {
+      const centralTime = formatCentralTime(t.created_at);
+      return {
+        id: t.id,
+        date: centralTime.date,
+        time: centralTime.time,
+        type: t.transaction_type,
+        amount_cents: t.amount_cents,
+        amount_dollars: (t.amount_cents / 100).toFixed(2),
+        description: t.description,
+        member_number: t.accounts?.member_number,
+        account_name: t.accounts?.account_name,
+        session_id: t.session_id,
+      };
+    })
 
     return new Response(JSON.stringify({
       ok: true,
