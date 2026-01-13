@@ -139,8 +139,11 @@ function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok
     case 'update_settings':
       const SETTINGS_ALLOWLIST: Record<string, { type: string; min: number; max: number }> = {
         ballPrice: { type: 'number', min: 0, max: 100 },
+        ball_price: { type: 'number', min: 0, max: 100 },
         weekdayGuestFee: { type: 'number', min: 0, max: 500 },
-        weekendGuestFee: { type: 'number', min: 0, max: 500 }
+        weekday_guest_fee: { type: 'number', min: 0, max: 500 },
+        weekendGuestFee: { type: 'number', min: 0, max: 500 },
+        weekend_guest_fee: { type: 'number', min: 0, max: 500 }
       };
       for (const [key, value] of Object.entries(args)) {
         const rule = SETTINGS_ALLOWLIST[key];
@@ -262,29 +265,38 @@ async function executeToolViaEndpoint(
     },
     update_settings: {
       endpoint: 'update-system-settings',
-      transformArgs: (args) => {
-        // Validate settings allowlist and bounds
-        const SETTINGS_ALLOWLIST: Record<string, { type: string; min: number; max: number }> = {
-          ballPrice: { type: 'number', min: 0, max: 100 },
-          weekdayGuestFee: { type: 'number', min: 0, max: 500 },
-          weekendGuestFee: { type: 'number', min: 0, max: 500 }
+      transformArgs: async (args, _supabase, deviceId) => {
+        // Map input keys to endpoint keys (endpoint uses _cents suffix and values in cents)
+        const SETTINGS_MAP: Record<string, { outputKey: string; min: number; max: number; toCents: boolean }> = {
+          ball_price: { outputKey: 'ball_price_cents', min: 0, max: 100, toCents: true },
+          ballPrice: { outputKey: 'ball_price_cents', min: 0, max: 100, toCents: true },
+          weekday_guest_fee: { outputKey: 'guest_fee_weekday_cents', min: 0, max: 500, toCents: true },
+          weekdayGuestFee: { outputKey: 'guest_fee_weekday_cents', min: 0, max: 500, toCents: true },
+          weekend_guest_fee: { outputKey: 'guest_fee_weekend_cents', min: 0, max: 500, toCents: true },
+          weekendGuestFee: { outputKey: 'guest_fee_weekend_cents', min: 0, max: 500, toCents: true }
         };
 
-        const validated: Record<string, unknown> = {};
+        const settings: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(args)) {
-          const rule = SETTINGS_ALLOWLIST[key];
-          if (!rule) {
+          const mapping = SETTINGS_MAP[key];
+          if (!mapping) {
             throw new Error(`Setting not allowed: ${key}`);
           }
-          if (typeof value !== rule.type) {
-            throw new Error(`Invalid type for ${key}: expected ${rule.type}`);
+          if (typeof value !== 'number') {
+            throw new Error(`Invalid type for ${key}: expected number`);
           }
-          if (typeof value === 'number' && (value < rule.min || value > rule.max)) {
-            throw new Error(`${key} out of bounds (${rule.min}-${rule.max})`);
+          if (value < mapping.min || value > mapping.max) {
+            throw new Error(`${key} out of bounds (${mapping.min}-${mapping.max})`);
           }
-          validated[key] = value;
+          // Convert dollars to cents if needed
+          const finalValue = mapping.toCents ? Math.round(value * 100) : value;
+          settings[mapping.outputKey] = finalValue;
         }
-        return validated;
+
+        return {
+          device_id: deviceId,
+          settings: settings
+        };
       }
     },
     get_court_status: { endpoint: 'get-board' },
@@ -299,7 +311,7 @@ async function executeToolViaEndpoint(
   }
 
   const transformedArgs = mapping.transformArgs
-    ? await mapping.transformArgs(args, supabase)
+    ? await mapping.transformArgs(args, supabase, deviceId)
     : args;
 
   // Determine HTTP method - read tools use GET, others use POST
@@ -319,7 +331,7 @@ async function executeToolViaEndpoint(
     response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${serviceRoleKey}`,
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4',
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
         'x-device-type': 'admin',
@@ -328,10 +340,12 @@ async function executeToolViaEndpoint(
     });
   } else {
     // POST request with body
+    console.log('Calling endpoint:', `${supabaseUrl}/functions/v1/${mapping.endpoint}`);
+    console.log('Using service role key (first 20 chars):', serviceRoleKey?.substring(0, 20));
     response = await fetch(`${supabaseUrl}/functions/v1/${mapping.endpoint}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${serviceRoleKey}`,
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4',
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
         'x-device-type': 'admin',
@@ -752,7 +766,17 @@ serve(async (req) => {
 
     const contextStr = shapeContext(courts, waitlist, settings);
 
-    const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system. Current time: ${serverNow}
+    const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system.
+
+IMPORTANT - TIMEZONE:
+- The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
+- Current time: ${serverNow} (UTC)
+- When users mention times like "9am" or "2pm", they mean Central Time
+- When creating blocks, convert user's local time to UTC:
+  - Central Standard Time (CST) is UTC-6
+  - Central Daylight Time (CDT) is UTC-5
+  - Currently it is January, so CST (UTC-6) applies
+  - Example: User says "9am" → use "15:00:00Z" (9 + 6 = 15)
 
 CURRENT SYSTEM STATE:
 ${contextStr}
