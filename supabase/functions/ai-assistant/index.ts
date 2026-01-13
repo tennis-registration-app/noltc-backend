@@ -58,6 +58,8 @@ const TOOL_RISKS: Record<string, ToolRisk> = {
   create_block: { level: 'low', description: 'Create court block' },
   cancel_block: { level: 'low', description: 'Cancel court block' },
   update_settings: { level: 'high', description: 'Update system settings' },
+  add_holiday_hours: { level: 'high', description: 'Modify operating hours for a date' },
+  get_analytics: { level: 'read', description: 'Query analytics data' },
   // Future tools
   end_session: { level: 'high', description: 'End active session' },
   move_court: { level: 'low', description: 'Move players between courts' },
@@ -66,7 +68,7 @@ const TOOL_RISKS: Record<string, ToolRisk> = {
 };
 
 // Tools allowed in read-only mode
-const READ_ONLY_TOOLS = ['get_court_status', 'get_session_history', 'get_transactions', 'get_blocks'];
+const READ_ONLY_TOOLS = ['get_court_status', 'get_session_history', 'get_transactions', 'get_blocks', 'get_analytics'];
 
 // Helper to check if any proposed tools are high-risk
 function hasHighRiskTools(toolCalls: Array<{ name: string }>): boolean {
@@ -104,6 +106,11 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
     case 'update_settings':
       const changes = Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ');
       return `Update settings: ${changes}`;
+    case 'add_holiday_hours':
+      if (args.is_closed) {
+        return `Close club on ${args.date}${args.reason ? ` (${args.reason})` : ''}`;
+      }
+      return `Set hours on ${args.date} to ${args.opens_at}-${args.closes_at}${args.reason ? ` (${args.reason})` : ''}`;
     case 'get_court_status':
       return args.court_number ? `Get status for Court ${args.court_number}` : 'Get all court statuses';
     case 'get_session_history':
@@ -112,6 +119,11 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
       return `Query ${args.type || 'all'} transactions`;
     case 'get_blocks':
       return `List blocks${args.start_date ? ` from ${args.start_date}` : ''}`;
+    case 'get_analytics':
+      if (args.query_type === 'summary') {
+        return 'Get analytics summary (sessions, usage patterns)';
+      }
+      return `Get ${args.query_type === 'usage_comparison' ? 'court usage' : 'wait time'} data from ${args.start_date} to ${args.end_date}`;
     default:
       return `Execute ${toolName}`;
   }
@@ -156,6 +168,30 @@ function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok
         if (typeof value === 'number' && (value < rule.min || value > rule.max)) {
           return { ok: false, error: `${key} out of bounds (${rule.min}-${rule.max})` };
         }
+      }
+      break;
+    case 'add_holiday_hours':
+      if (!args.date || typeof args.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(args.date as string)) {
+        return { ok: false, error: 'add_holiday_hours requires date in YYYY-MM-DD format' };
+      }
+      if (typeof args.is_closed !== 'boolean') {
+        return { ok: false, error: 'add_holiday_hours requires is_closed (boolean)' };
+      }
+      if (!args.is_closed) {
+        if (!args.opens_at || !args.closes_at) {
+          return { ok: false, error: 'Modified hours require opens_at and closes_at' };
+        }
+        if (!/^\d{2}:\d{2}$/.test(args.opens_at as string) || !/^\d{2}:\d{2}$/.test(args.closes_at as string)) {
+          return { ok: false, error: 'Times must be in HH:MM format' };
+        }
+      }
+      break;
+    case 'get_analytics':
+      if (!args.query_type || !['summary', 'usage_comparison', 'waittime_comparison'].includes(args.query_type as string)) {
+        return { ok: false, error: 'get_analytics requires query_type: summary, usage_comparison, or waittime_comparison' };
+      }
+      if ((args.query_type === 'usage_comparison' || args.query_type === 'waittime_comparison') && (!args.start_date || !args.end_date)) {
+        return { ok: false, error: 'Comparison queries require start_date and end_date' };
       }
       break;
   }
@@ -299,10 +335,47 @@ async function executeToolViaEndpoint(
         };
       }
     },
+    add_holiday_hours: {
+      endpoint: 'update-system-settings',
+      transformArgs: async (args, _supabase, deviceId) => {
+        const override: Record<string, unknown> = {
+          date: args.date,
+          is_closed: args.is_closed
+        };
+        if (!args.is_closed) {
+          override.opens_at = args.opens_at;
+          override.closes_at = args.closes_at;
+        }
+        if (args.reason) {
+          override.reason = args.reason;
+        }
+        return {
+          device_id: deviceId,
+          operating_hours_override: override
+        };
+      }
+    },
     get_court_status: { endpoint: 'get-board' },
     get_session_history: { endpoint: 'get-session-history' },
     get_transactions: { endpoint: 'get-transactions' },
-    get_blocks: { endpoint: 'get-blocks' }
+    get_blocks: { endpoint: 'get-blocks' },
+    get_analytics: {
+      endpoint: 'get-analytics',
+      transformArgs: async (args, _supabase, _deviceId) => {
+        if (args.query_type === 'summary') {
+          return { days_back: 30 };
+        }
+        // For comparison queries, return params for get-usage-comparison
+        // We'll need special handling in the fetch logic
+        return {
+          _useEndpoint: 'get-usage-comparison',
+          metric: args.query_type === 'usage_comparison' ? 'usage' : 'waittime',
+          primaryStart: args.start_date,
+          primaryEnd: args.end_date,
+          granularity: args.granularity || 'auto'
+        };
+      }
+    }
   };
 
   const mapping = endpointMap[toolName];
@@ -313,6 +386,10 @@ async function executeToolViaEndpoint(
   const transformedArgs = mapping.transformArgs
     ? await mapping.transformArgs(args, supabase, deviceId)
     : args;
+
+  // Check for endpoint override (used by get_analytics for comparison queries)
+  const actualEndpoint = (transformedArgs as Record<string, unknown>)._useEndpoint as string || mapping.endpoint;
+  delete (transformedArgs as Record<string, unknown>)._useEndpoint;
 
   // Determine HTTP method - read tools use GET, others use POST
   const isReadTool = READ_ONLY_TOOLS.includes(toolName);
@@ -327,7 +404,7 @@ async function executeToolViaEndpoint(
         params.append(key, String(value));
       }
     }
-    const url = `${supabaseUrl}/functions/v1/${mapping.endpoint}?${params.toString()}`;
+    const url = `${supabaseUrl}/functions/v1/${actualEndpoint}?${params.toString()}`;
     response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -340,9 +417,9 @@ async function executeToolViaEndpoint(
     });
   } else {
     // POST request with body
-    console.log('Calling endpoint:', `${supabaseUrl}/functions/v1/${mapping.endpoint}`);
+    console.log('Calling endpoint:', `${supabaseUrl}/functions/v1/${actualEndpoint}`);
     console.log('Using service role key (first 20 chars):', serviceRoleKey?.substring(0, 20));
-    response = await fetch(`${supabaseUrl}/functions/v1/${mapping.endpoint}`, {
+    response = await fetch(`${supabaseUrl}/functions/v1/${actualEndpoint}`, {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4',
@@ -635,6 +712,64 @@ const tools = [
       },
       required: []
     }
+  },
+  {
+    name: "add_holiday_hours",
+    description: "Add or modify operating hours for a specific date (holiday, special event, etc). Set is_closed: true to close entirely, or set is_closed: false with BOTH opens_at and closes_at times for modified hours. Standard opening is 06:00.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: {
+          type: "string",
+          description: "Date in YYYY-MM-DD format"
+        },
+        is_closed: {
+          type: "boolean",
+          description: "True if the club is closed for the entire day"
+        },
+        opens_at: {
+          type: "string",
+          description: "Opening time in HH:MM format (24-hour). Required if is_closed is false."
+        },
+        closes_at: {
+          type: "string",
+          description: "Closing time in HH:MM format (24-hour). Required if is_closed is false."
+        },
+        reason: {
+          type: "string",
+          description: "Reason for the modified hours (e.g., 'Christmas Day', 'Tournament')"
+        }
+      },
+      required: ["date", "is_closed"]
+    }
+  },
+  {
+    name: "get_analytics",
+    description: "Get analytics data including session counts, usage statistics, wait times, and heatmap data. Use this to answer questions about court usage patterns, busiest times, game counts, etc.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query_type: {
+          type: "string",
+          enum: ["summary", "usage_comparison", "waittime_comparison"],
+          description: "Type of analytics query. 'summary' for overall stats, 'usage_comparison' for court hours by period, 'waittime_comparison' for wait times by period."
+        },
+        start_date: {
+          type: "string",
+          description: "Start date in YYYY-MM-DD format (for comparison queries)"
+        },
+        end_date: {
+          type: "string",
+          description: "End date in YYYY-MM-DD format (for comparison queries)"
+        },
+        granularity: {
+          type: "string",
+          enum: ["day", "week", "month", "auto"],
+          description: "Time granularity for comparison queries. 'auto' selects based on date range."
+        }
+      },
+      required: ["query_type"]
+    }
   }
 ]
 
@@ -848,6 +983,88 @@ The user is an administrator with full access to manage courts, blocks, and sett
         } else if (block.type === 'text') {
           textResponse += block.text;
         }
+      }
+
+      // If all proposed tools are read-only, execute immediately (no confirmation needed)
+      const allReadOnly = proposedToolCalls.every(tc => TOOL_RISKS[tc.tool]?.level === 'read');
+
+      if (allReadOnly && proposedToolCalls.length > 0) {
+        // Execute read-only tools directly
+        const executedActions: AiAssistantResponse['executed_actions'] = [];
+        const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
+        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+        for (const call of proposedToolCalls) {
+          try {
+            const result = await executeToolViaEndpoint(
+              call.tool,
+              call.args,
+              supabaseUrlExec,
+              serviceRoleKey,
+              requestData.device_id,
+              supabase
+            );
+            executedActions.push({
+              tool: call.tool,
+              success: result.ok,
+              result: result.data,
+              error: result.error
+            });
+          } catch (err: any) {
+            executedActions.push({
+              tool: call.tool,
+              success: false,
+              error: err.message || 'Unknown error'
+            });
+          }
+        }
+
+        // Make a follow-up call to Claude to interpret the data
+        const dataContext = executedActions
+          .filter(a => a.success && a.result)
+          .map(a => `Data from ${a.tool}:\n${JSON.stringify(a.result, null, 2)}`)
+          .join('\n\n');
+
+        const followUpResponse = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicApiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1024,
+            messages: [
+              {
+                role: 'user',
+                content: `The user asked: "${requestData.prompt}"\n\nHere is the data:\n${dataContext}\n\nProvide a concise, natural language answer to the user's question based on this data. Be specific with numbers and insights. Do not show raw JSON.`
+              }
+            ]
+          })
+        });
+
+        let naturalResponse = textResponse || 'Here is what I found:';
+        if (followUpResponse.ok) {
+          const followUpResult = await followUpResponse.json();
+          const followUpText = followUpResult.content
+            ?.filter((block: any) => block.type === 'text')
+            .map((block: any) => block.text)
+            .join('\n');
+          if (followUpText) {
+            naturalResponse = followUpText;
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            mode: 'read',
+            response: naturalResponse,
+            executed_actions: executedActions
+          } as AiAssistantResponse),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
 
       // If no tool calls, just return the text response
