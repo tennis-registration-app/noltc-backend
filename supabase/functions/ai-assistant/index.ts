@@ -1,5 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { create, verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts"
+
+// Payload limits
+const MAX_PROMPT_CHARS = 2000;
+const MAX_CONTEXT_CHARS = 50000;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,6 +15,383 @@ interface AiAssistantRequest {
   prompt: string
   device_id: string
   device_type: string
+  mode?: 'read' | 'draft' | 'execute'  // Default: 'draft'
+  actions_token?: string               // Required for execute mode
+  confirm_destructive?: boolean        // Required for high-risk in execute mode
+}
+
+interface ToolRisk {
+  level: 'read' | 'low' | 'high'
+  description: string
+}
+
+interface ProposedToolCall {
+  id: string
+  tool: string
+  args: Record<string, unknown>
+  risk: 'read' | 'low' | 'high'
+  description: string  // Server-generated from args
+}
+
+interface AiAssistantResponse {
+  ok: boolean
+  response?: string
+  error?: string
+  mode?: 'read' | 'draft' | 'execute'
+  proposed_tool_calls?: ProposedToolCall[]
+  actions_token?: string
+  requires_confirmation?: boolean
+  executed_actions?: {
+    tool: string
+    success: boolean
+    result?: unknown
+    error?: string
+  }[]
+}
+
+// Tool risk classification
+const TOOL_RISKS: Record<string, ToolRisk> = {
+  get_court_status: { level: 'read', description: 'View court availability' },
+  get_session_history: { level: 'read', description: 'Query past sessions' },
+  get_transactions: { level: 'read', description: 'Query transactions' },
+  get_blocks: { level: 'read', description: 'List scheduled blocks' },
+  create_block: { level: 'low', description: 'Create court block' },
+  cancel_block: { level: 'low', description: 'Cancel court block' },
+  update_settings: { level: 'high', description: 'Update system settings' },
+  // Future tools
+  end_session: { level: 'high', description: 'End active session' },
+  move_court: { level: 'low', description: 'Move players between courts' },
+  clear_all_courts: { level: 'high', description: 'Clear all courts' },
+  clear_waitlist: { level: 'high', description: 'Clear entire waitlist' },
+};
+
+// Tools allowed in read-only mode
+const READ_ONLY_TOOLS = ['get_court_status', 'get_session_history', 'get_transactions', 'get_blocks'];
+
+// Helper to check if any proposed tools are high-risk
+function hasHighRiskTools(toolCalls: Array<{ name: string }>): boolean {
+  return toolCalls.some(tc => TOOL_RISKS[tc.name]?.level === 'high');
+}
+
+// Helper to filter tools by mode
+function getToolsForMode(allTools: Array<{ name: string }>, mode: string): Array<{ name: string }> {
+  if (mode === 'read') {
+    return allTools.filter(t => READ_ONLY_TOOLS.includes(t.name));
+  }
+  return allTools; // draft and execute get all tools
+}
+
+// JWT secret for signing action tokens (use service role key or dedicated secret)
+const getJwtSecret = async (): Promise<CryptoKey> => {
+  const secret = Deno.env.get('AI_ACTIONS_SECRET') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const encoder = new TextEncoder();
+  return await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  );
+};
+
+// Generate description from tool call args (server-side, not from Claude)
+function generateToolDescription(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'create_block':
+      return `Create ${args.block_type || 'block'} on Court ${args.court_number} (${args.title || 'No title'})`;
+    case 'cancel_block':
+      return `Cancel block ${args.block_id ? `ID ${args.block_id}` : `on Court ${args.court_number}`}`;
+    case 'update_settings':
+      const changes = Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ');
+      return `Update settings: ${changes}`;
+    case 'get_court_status':
+      return args.court_number ? `Get status for Court ${args.court_number}` : 'Get all court statuses';
+    case 'get_session_history':
+      return `Query session history${args.limit ? ` (limit ${args.limit})` : ''}`;
+    case 'get_transactions':
+      return `Query ${args.type || 'all'} transactions`;
+    case 'get_blocks':
+      return `List blocks${args.start_date ? ` from ${args.start_date}` : ''}`;
+    default:
+      return `Execute ${toolName}`;
+  }
+}
+
+// Create JWT token for proposed actions
+async function createActionsToken(
+  deviceId: string,
+  proposedCalls: ProposedToolCall[]
+): Promise<string> {
+  const key = await getJwtSecret();
+  const payload = {
+    device_id: deviceId,
+    proposed_calls: proposedCalls,
+    jti: crypto.randomUUID(),  // Unique token ID
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 300,  // 5 minute expiry
+  };
+  return await create({ alg: 'HS256', typ: 'JWT' }, payload, key);
+}
+
+// Verify JWT token and extract proposed calls
+async function verifyActionsToken(
+  token: string,
+  deviceId: string
+): Promise<{ ok: true, proposedCalls: ProposedToolCall[] } | { ok: false, error: string }> {
+  try {
+    const key = await getJwtSecret();
+    const payload = await verify(token, key);
+
+    if (payload.device_id !== deviceId) {
+      return { ok: false, error: 'Token device mismatch' };
+    }
+
+    return { ok: true, proposedCalls: payload.proposed_calls as ProposedToolCall[] };
+  } catch (err) {
+    if (err.message?.includes('expired')) {
+      return { ok: false, error: 'Token expired. Please request new actions.' };
+    }
+    return { ok: false, error: 'Invalid token' };
+  }
+}
+
+// Execute a tool by calling the existing Edge Function endpoint
+async function executeToolViaEndpoint(
+  toolName: string,
+  args: Record<string, unknown>,
+  supabaseUrl: string,
+  authHeader: string,  // Forward the incoming Authorization header
+  deviceId: string,
+  supabase: any
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+
+  // Map tool names to endpoints and transform args as needed
+  const endpointMap: Record<string, { endpoint: string; transformArgs?: (args: Record<string, unknown>, supabase: any) => Promise<Record<string, unknown>> | Record<string, unknown> }> = {
+    create_block: {
+      endpoint: 'create-block',
+      transformArgs: async (args, supabase) => {
+        // Convert court_number to court_id
+        let courtId = args.court_id;
+        if (!courtId && args.court_number) {
+          const { data: court } = await supabase
+            .from('courts')
+            .select('id')
+            .eq('court_number', args.court_number)
+            .single();
+          if (!court) {
+            throw new Error(`Court ${args.court_number} not found`);
+          }
+          courtId = court.id;
+        }
+
+        return {
+          court_id: courtId,
+          block_type: args.block_type,
+          title: args.title,
+          starts_at: args.starts_at,
+          ends_at: args.ends_at,
+          device_id: deviceId,
+          device_type: 'admin',
+          initiated_by: 'ai_assistant'
+        };
+      }
+    },
+    cancel_block: {
+      endpoint: 'cancel-block',
+      transformArgs: async (args, supabase) => {
+        // Convert court_number to court_id if needed
+        let courtId = args.court_id;
+        if (!courtId && args.court_number) {
+          const { data: court } = await supabase
+            .from('courts')
+            .select('id')
+            .eq('court_number', args.court_number)
+            .single();
+          if (court) {
+            courtId = court.id;
+          }
+        }
+        return {
+          ...args,
+          court_id: courtId,
+          device_id: deviceId
+        };
+      }
+    },
+    update_settings: {
+      endpoint: 'update-system-settings',
+      transformArgs: (args) => {
+        // Validate settings allowlist and bounds
+        const SETTINGS_ALLOWLIST: Record<string, { type: string; min: number; max: number }> = {
+          ballPrice: { type: 'number', min: 0, max: 100 },
+          weekdayGuestFee: { type: 'number', min: 0, max: 500 },
+          weekendGuestFee: { type: 'number', min: 0, max: 500 }
+        };
+
+        const validated: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(args)) {
+          const rule = SETTINGS_ALLOWLIST[key];
+          if (!rule) {
+            throw new Error(`Setting not allowed: ${key}`);
+          }
+          if (typeof value !== rule.type) {
+            throw new Error(`Invalid type for ${key}: expected ${rule.type}`);
+          }
+          if (typeof value === 'number' && (value < rule.min || value > rule.max)) {
+            throw new Error(`${key} out of bounds (${rule.min}-${rule.max})`);
+          }
+          validated[key] = value;
+        }
+        return validated;
+      }
+    },
+    get_court_status: { endpoint: 'get-board' },
+    get_session_history: { endpoint: 'get-session-history' },
+    get_transactions: { endpoint: 'get-transactions' },
+    get_blocks: { endpoint: 'get-blocks' }
+  };
+
+  const mapping = endpointMap[toolName];
+  if (!mapping) {
+    return { ok: false, error: `Unknown tool: ${toolName}` };
+  }
+
+  const transformedArgs = mapping.transformArgs
+    ? await mapping.transformArgs(args, supabase)
+    : args;
+
+  // Determine HTTP method - read tools use GET, others use POST
+  const isReadTool = READ_ONLY_TOOLS.includes(toolName);
+
+  let response: Response;
+
+  if (isReadTool && toolName !== 'get_court_status') {
+    // GET request with query params
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(transformedArgs)) {
+      if (value !== undefined && value !== null) {
+        params.append(key, String(value));
+      }
+    }
+    const url = `${supabaseUrl}/functions/v1/${mapping.endpoint}?${params.toString()}`;
+    response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+        'x-device-id': deviceId,
+        'x-device-type': 'admin'
+      }
+    });
+  } else {
+    // POST request with body
+    response = await fetch(`${supabaseUrl}/functions/v1/${mapping.endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+        'x-device-id': deviceId,
+        'x-device-type': 'admin'
+      },
+      body: JSON.stringify(transformedArgs)
+    });
+  }
+
+  const result = await response.json();
+
+  if (!response.ok || result.ok === false) {
+    return {
+      ok: false,
+      error: result.error || result.message || `HTTP ${response.status}`
+    };
+  }
+
+  return { ok: true, data: result };
+}
+
+// Rate limiting - check and record requests
+async function checkRateLimit(
+  supabase: any,
+  deviceId: string
+): Promise<{ ok: true } | { ok: false; error: string; retryAfter: number }> {
+  const RATE_LIMIT = parseInt(Deno.env.get('AI_RATE_LIMIT') || '10');
+  const RATE_WINDOW = parseInt(Deno.env.get('AI_RATE_WINDOW') || '60'); // seconds
+
+  const windowStart = new Date(Date.now() - RATE_WINDOW * 1000).toISOString();
+
+  // Count recent requests
+  const { count, error: countError } = await supabase
+    .from('ai_rate_limits')
+    .select('*', { count: 'exact', head: true })
+    .eq('device_id', deviceId)
+    .gte('created_at', windowStart);
+
+  if (countError) {
+    console.error('Rate limit check error:', countError);
+    // Fail open - allow request if we can't check
+    return { ok: true };
+  }
+
+  if (count && count >= RATE_LIMIT) {
+    return {
+      ok: false,
+      error: `Rate limited. Maximum ${RATE_LIMIT} requests per ${RATE_WINDOW} seconds.`,
+      retryAfter: RATE_WINDOW
+    };
+  }
+
+  // Record this request
+  await supabase.from('ai_rate_limits').insert({ device_id: deviceId });
+
+  return { ok: true };
+}
+
+// Context shaping helper - call this before building the system prompt
+function shapeContext(courts: any[], waitlist: any[], settings: any): string {
+  // Include IDs that tools need to execute
+  const courtSummary = courts.map(c => ({
+    court_number: c.court_number,
+    court_id: c.id,
+    status: c.status || (c.current_session ? 'occupied' : 'available'),
+    players: c.current_session?.participants?.map((p: any) => p.member_name || p.guest_name) || [],
+    session_id: c.current_session?.id || null,
+    is_overtime: c.is_overtime || false,
+    block: c.active_block ? {
+      id: c.active_block.id,
+      type: c.active_block.block_type,
+      title: c.active_block.title
+    } : null
+  }));
+
+  const waitlistSummary = waitlist.slice(0, 20).map((w: any, idx: number) => ({
+    position: idx + 1,
+    waitlist_id: w.id,
+    group_type: w.group_type,
+    members: w.members?.map((m: any) => m.member_name || m.guest_name) || []
+  }));
+
+  const context = {
+    current_time: new Date().toISOString(),
+    courts: courtSummary,
+    waitlist_count: waitlist.length,
+    waitlist: waitlistSummary,
+    settings: {
+      ball_price: settings?.ballPrice,
+      weekday_guest_fee: settings?.weekdayGuestFee,
+      weekend_guest_fee: settings?.weekendGuestFee
+    }
+  };
+
+  let contextStr = JSON.stringify(context, null, 2);
+
+  // Truncate if too large
+  if (contextStr.length > MAX_CONTEXT_CHARS) {
+    // Remove waitlist details first
+    context.waitlist = [];
+    contextStr = JSON.stringify(context, null, 2);
+  }
+
+  return contextStr;
 }
 
 // Define tools the AI can use
@@ -198,6 +580,9 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 
+  // Extract auth header for forwarding to other edge functions
+  const authHeader = req.headers.get('Authorization') || ''
+
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   let requestData: AiAssistantRequest | null = null
@@ -218,6 +603,33 @@ serve(async (req) => {
     if (!anthropicApiKey) {
       throw new Error('Anthropic API key not configured')
     }
+
+    // ===========================================
+    // MODE HANDLING
+    // ===========================================
+
+    const mode = requestData.mode || 'draft';  // Default to draft mode
+    const actionsToken = requestData.actions_token;
+    const confirmDestructive = requestData.confirm_destructive || false;
+
+    // Validate mode
+    if (!['read', 'draft', 'execute'].includes(mode)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'Invalid mode. Must be read, draft, or execute.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Execute mode requires actions_token
+    if (mode === 'execute' && !actionsToken) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'Execute mode requires actions_token from draft response.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Filter tools based on mode
+    const filteredTools = getToolsForMode(tools, mode);
 
     // ===========================================
     // VERIFY DEVICE EXISTS AND IS ADMIN
@@ -242,24 +654,73 @@ serve(async (req) => {
       .update({ last_seen_at: new Date().toISOString() })
       .eq('id', requestData.device_id)
 
+    // Check rate limit
+    const rateLimitResult = await checkRateLimit(supabase, requestData.device_id);
+    if (!rateLimitResult.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: rateLimitResult.error }),
+        {
+          status: 429,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Retry-After': String(rateLimitResult.retryAfter)
+          }
+        }
+      );
+    }
+
+    // Validate prompt length
+    if (requestData.prompt.length > MAX_PROMPT_CHARS) {
+      return new Response(
+        JSON.stringify({ ok: false, error: `Prompt too long. Maximum ${MAX_PROMPT_CHARS} characters.` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // ===========================================
-    // CALL ANTHROPIC API
+    // FETCH CONTEXT AND CALL ANTHROPIC API
     // ===========================================
 
-    const systemPrompt = `You are an AI assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system. You help club administrators manage courts, blocks, and view analytics.
+    // Fetch current context for the AI
+    const serverNow = new Date().toISOString();
 
-Current date/time: ${new Date().toISOString()}
+    const [boardResult, waitlistResult, settingsResult] = await Promise.all([
+      supabase.rpc('get_court_board', { request_time: serverNow }),
+      supabase.rpc('get_active_waitlist', { request_time: serverNow }),
+      supabase.from('system_settings').select('*')
+    ]);
 
-You have access to tools to:
-- Create and cancel court blocks (lessons, clinics, maintenance, wet courts)
-- View current court status
-- Query session history (who played on which courts)
-- Query transactions (guest fees, ball purchases)
-- Update system settings (prices)
+    const courts = boardResult.data || [];
+    const waitlist = waitlistResult.data || [];
+    // Convert settings array to object
+    const settingsArray = settingsResult.data || [];
+    const settings: Record<string, any> = {};
+    for (const s of settingsArray) {
+      settings[s.key] = s.value;
+    }
 
-When users ask about courts, they refer to them by number (1-12).
-When creating blocks, always confirm the details before executing.
-Be concise but helpful in your responses.`
+    const contextStr = shapeContext(courts, waitlist, settings);
+
+    const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system. Current time: ${serverNow}
+
+CURRENT SYSTEM STATE:
+${contextStr}
+
+YOUR CAPABILITIES:
+- View court status, session history, transactions, and scheduled blocks (read operations)
+- Create and cancel court blocks for maintenance, lessons, clinics, etc.
+- Update system settings (ball price, guest fees)
+
+IMPORTANT RULES:
+1. When asked about courts, players, or waitlist, refer to the CURRENT SYSTEM STATE above.
+2. For any action that modifies data, use the appropriate tool.
+3. Use court_number (1-12) when users reference courts.
+4. Use court_id from the context when tools require it.
+5. Be concise and helpful. Confirm what you're about to do before proposing actions.
+6. If you're unsure, ask clarifying questions.
+
+The user is an administrator with full access to manage courts, blocks, and settings.`
 
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -272,7 +733,7 @@ Be concise but helpful in your responses.`
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
         system: systemPrompt,
-        tools: tools,
+        tools: filteredTools,
         messages: [
           { role: 'user', content: requestData.prompt }
         ]
@@ -286,8 +747,161 @@ Be concise but helpful in your responses.`
 
     const aiResult = await anthropicResponse.json()
 
+    // === DRAFT MODE: Propose actions without executing ===
+    if (mode === 'draft') {
+      const proposedToolCalls: ProposedToolCall[] = [];
+      let textResponse = '';
+
+      for (const block of aiResult.content) {
+        if (block.type === 'tool_use') {
+          const risk = TOOL_RISKS[block.name]?.level || 'low';
+          proposedToolCalls.push({
+            id: block.id,
+            tool: block.name,
+            args: block.input as Record<string, unknown>,
+            risk: risk,
+            description: generateToolDescription(block.name, block.input as Record<string, unknown>)
+          });
+        } else if (block.type === 'text') {
+          textResponse += block.text;
+        }
+      }
+
+      // If no tool calls, just return the text response
+      if (proposedToolCalls.length === 0) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            mode: 'draft',
+            response: textResponse || 'How can I help you?',
+            proposed_tool_calls: [],
+            requires_confirmation: false
+          } as AiAssistantResponse),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Check if confirmation will be required
+      const requiresConfirmation = hasHighRiskTools(proposedToolCalls.map(tc => ({ name: tc.tool })));
+
+      // Generate token for execute phase
+      const actionsToken = await createActionsToken(requestData.device_id, proposedToolCalls);
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          mode: 'draft',
+          response: textResponse || 'I can help with that. Please review the proposed actions below.',
+          proposed_tool_calls: proposedToolCalls,
+          actions_token: actionsToken,
+          requires_confirmation: requiresConfirmation
+        } as AiAssistantResponse),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // === READ MODE: Execute read-only tools immediately (they're safe) ===
+    if (mode === 'read') {
+      // Continue to existing tool execution - read-only tools are already filtered
+    }
+
+    // === EXECUTE MODE: Verify token and execute proposed actions ===
+    if (mode === 'execute') {
+      // Verify the actions token
+      const tokenResult = await verifyActionsToken(actionsToken!, requestData.device_id);
+      if (!tokenResult.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, error: tokenResult.error }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const proposedCalls = tokenResult.proposedCalls;
+
+      // Check if high-risk actions require confirmation
+      const hasHighRisk = hasHighRiskTools(proposedCalls.map(tc => ({ name: tc.tool })));
+      if (hasHighRisk && !confirmDestructive) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: 'High-risk actions require confirmation. Set confirm_destructive: true.'
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Hard guard: max 5 actions per request
+      if (proposedCalls.length > 5) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Too many actions. Maximum 5 per request.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Execute the proposed actions via existing endpoints
+      const executedActions: AiAssistantResponse['executed_actions'] = [];
+      const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+      for (const call of proposedCalls) {
+        try {
+          const result = await executeToolViaEndpoint(
+            call.tool,
+            call.args,
+            supabaseUrlExec,
+            authHeader,
+            requestData.device_id,
+            supabase
+          );
+          executedActions.push({
+            tool: call.tool,
+            success: result.ok,
+            result: result.data,
+            error: result.error
+          });
+        } catch (err) {
+          executedActions.push({
+            tool: call.tool,
+            success: false,
+            error: err.message || 'Unknown error'
+          });
+        }
+      }
+
+      // Audit log the execution
+      await supabase.from('audit_log').insert({
+        action: 'ai_assistant_execute',
+        entity_type: 'ai_assistant',
+        entity_id: requestData.device_id,
+        device_id: requestData.device_id,
+        device_type: requestData.device_type,
+        initiated_by: 'ai_assistant',
+        request_data: {
+          prompt: requestData.prompt,
+          mode: 'execute',
+          executed_tools: executedActions.map(a => a.tool),
+          success: executedActions.every(a => a.success)
+        },
+        outcome: executedActions.every(a => a.success) ? 'success' : 'failure',
+        ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+      });
+
+      const allSucceeded = executedActions.every(a => a.success);
+      return new Response(
+        JSON.stringify({
+          ok: allSucceeded,
+          mode: 'execute',
+          response: allSucceeded
+            ? `Successfully executed ${executedActions.length} action(s).`
+            : 'Some actions failed. See executed_actions for details.',
+          executed_actions: executedActions
+        } as AiAssistantResponse),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // ===========================================
-    // PROCESS TOOL CALLS
+    // PROCESS TOOL CALLS (for read mode - tools already filtered)
     // ===========================================
 
     const toolResults: any[] = []
@@ -338,7 +952,7 @@ Be concise but helpful in your responses.`
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1024,
           system: systemPrompt,
-          tools: tools,
+          tools: filteredTools,
           messages: followUpMessages
         }),
       })

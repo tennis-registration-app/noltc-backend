@@ -21,7 +21,9 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // End any sessions that overlap with started blocks
+    // Auto-end sessions on courts where scheduled blocks have started.
+    // Scheduled blocks have no start-time trigger, so we check on every board fetch.
+    // This is idempotent - returns 0 if no sessions need ending.
     const { data: endedCount, error: endError } = await supabase
       .rpc('end_sessions_for_started_blocks');
 
