@@ -244,8 +244,7 @@ serve(async (req) => {
     }
 
     // ===========================================
-    // CHECK FOR ACTIVE SESSION DURING BLOCK TIME
-    // (Only warn if block starts now or in the past)
+    // END ACTIVE SESSION IF BLOCK STARTS NOW
     // ===========================================
 
     const now = new Date()
@@ -258,7 +257,34 @@ serve(async (req) => {
         .single()
 
       if (activeSession) {
-        return denialResponse('ACTIVE_SESSION', 'Court has an active session. End the session before blocking.', serverNow)
+        // End the active session
+        const { error: endError } = await supabase
+          .from('sessions')
+          .update({
+            actual_end_at: serverNow,
+            end_reason: 'admin_override',
+          })
+          .eq('id', activeSession.id)
+
+        if (endError) {
+          console.error('Failed to end session for block:', endError)
+          return internalErrorResponse('Failed to end active session', serverNow)
+        }
+
+        // Audit log for session ended by block
+        await supabase.from('audit_log').insert({
+          action: 'session_ended_by_block',
+          entity_type: 'session',
+          entity_id: activeSession.id,
+          device_id: requestData.device_id,
+          device_type: requestData.device_type,
+          initiated_by: requestData.initiated_by || 'user',
+          request_data: { reason: 'admin_override', trigger: 'block_created', court_id: requestData.court_id },
+          outcome: 'success',
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+        })
+
+        console.log(`Ended session ${activeSession.id} to create block on court ${requestData.court_id}`)
       }
     }
 

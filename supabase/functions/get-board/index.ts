@@ -21,6 +21,19 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
+    // End any sessions that overlap with started blocks
+    const { data: endedCount, error: endError } = await supabase
+      .rpc('end_sessions_for_started_blocks');
+
+    if (endError) {
+      console.error('Error ending sessions for blocks:', endError);
+      // Don't fail the request, just log the error
+    }
+
+    if (endedCount && endedCount > 0) {
+      console.log(`Ended ${endedCount} session(s) due to block start`);
+    }
+
     // Get court board using the exact same timestamp
     const { data: courts, error: courtsError } = await supabase.rpc('get_court_board', {
       request_time: serverNow,

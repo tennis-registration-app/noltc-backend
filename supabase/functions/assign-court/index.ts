@@ -362,7 +362,7 @@ serve(async (req) => {
           const endResult = await endSession(supabase, {
             sessionId: session.id,
             serverNow,
-            endReason: 'cleared_early',
+            endReason: 'overtime_takeover',
             deviceId: requestData.device_id,
             eventData: {
               trigger: activeSessions.length > 1 ? 'stale_session_cleanup' : 'overtime_takeover',

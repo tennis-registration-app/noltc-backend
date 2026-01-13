@@ -244,7 +244,7 @@ serve(async (req) => {
           .from('sessions')
           .update({
             actual_end_at: serverNow,
-            end_reason: 'admin_override'
+            end_reason: 'overtime_takeover'
           })
           .eq('id', activeSession.id)
           .is('actual_end_at', null) // Only if not already ended
