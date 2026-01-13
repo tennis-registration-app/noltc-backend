@@ -117,6 +117,48 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
   }
 }
 
+// Validate tool args before signing into token
+function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
+  switch (toolName) {
+    case 'create_block':
+      if (!args.court_number || typeof args.court_number !== 'number') {
+        return { ok: false, error: 'create_block requires valid court_number' };
+      }
+      if (!args.block_type || typeof args.block_type !== 'string') {
+        return { ok: false, error: 'create_block requires block_type' };
+      }
+      if (!args.starts_at || !args.ends_at) {
+        return { ok: false, error: 'create_block requires starts_at and ends_at' };
+      }
+      break;
+    case 'cancel_block':
+      if (!args.block_id && !args.court_number) {
+        return { ok: false, error: 'cancel_block requires block_id or court_number' };
+      }
+      break;
+    case 'update_settings':
+      const SETTINGS_ALLOWLIST: Record<string, { type: string; min: number; max: number }> = {
+        ballPrice: { type: 'number', min: 0, max: 100 },
+        weekdayGuestFee: { type: 'number', min: 0, max: 500 },
+        weekendGuestFee: { type: 'number', min: 0, max: 500 }
+      };
+      for (const [key, value] of Object.entries(args)) {
+        const rule = SETTINGS_ALLOWLIST[key];
+        if (!rule) {
+          return { ok: false, error: `Setting not allowed: ${key}` };
+        }
+        if (typeof value !== rule.type) {
+          return { ok: false, error: `Invalid type for ${key}` };
+        }
+        if (typeof value === 'number' && (value < rule.min || value > rule.max)) {
+          return { ok: false, error: `${key} out of bounds (${rule.min}-${rule.max})` };
+        }
+      }
+      break;
+  }
+  return { ok: true };
+}
+
 // Create JWT token for proposed actions
 async function createActionsToken(
   deviceId: string,
@@ -160,7 +202,7 @@ async function executeToolViaEndpoint(
   toolName: string,
   args: Record<string, unknown>,
   supabaseUrl: string,
-  authHeader: string,  // Forward the incoming Authorization header
+  serviceRoleKey: string,
   deviceId: string,
   supabase: any
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -277,10 +319,11 @@ async function executeToolViaEndpoint(
     response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': authHeader,
+        'Authorization': `Bearer ${serviceRoleKey}`,
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
-        'x-device-type': 'admin'
+        'x-device-type': 'admin',
+        'x-internal-call': 'ai-assistant'
       }
     });
   } else {
@@ -288,10 +331,11 @@ async function executeToolViaEndpoint(
     response = await fetch(`${supabaseUrl}/functions/v1/${mapping.endpoint}`, {
       method: 'POST',
       headers: {
-        'Authorization': authHeader,
+        'Authorization': `Bearer ${serviceRoleKey}`,
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
-        'x-device-type': 'admin'
+        'x-device-type': 'admin',
+        'x-internal-call': 'ai-assistant'
       },
       body: JSON.stringify(transformedArgs)
     });
@@ -342,6 +386,15 @@ async function checkRateLimit(
 
   // Record this request
   await supabase.from('ai_rate_limits').insert({ device_id: deviceId });
+
+  // Cleanup old entries occasionally (1% of requests trigger cleanup)
+  if (Math.random() < 0.01) {
+    const cleanupCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour ago
+    await supabase
+      .from('ai_rate_limits')
+      .delete()
+      .lt('created_at', cleanupCutoff);
+  }
 
   return { ok: true };
 }
@@ -580,9 +633,6 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 
-  // Extract auth header for forwarding to other edge functions
-  const authHeader = req.headers.get('Authorization') || ''
-
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   let requestData: AiAssistantRequest | null = null
@@ -754,6 +804,15 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
       for (const block of aiResult.content) {
         if (block.type === 'tool_use') {
+          // Validate args before signing into token
+          const validation = validateToolArgs(block.name, block.input as Record<string, unknown>);
+          if (!validation.ok) {
+            return new Response(
+              JSON.stringify({ ok: false, error: `Invalid tool args: ${validation.error}` }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+
           const risk = TOOL_RISKS[block.name]?.level || 'low';
           proposedToolCalls.push({
             id: block.id,
@@ -786,6 +845,24 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
       // Generate token for execute phase
       const actionsToken = await createActionsToken(requestData.device_id, proposedToolCalls);
+
+      // Audit log the draft proposal
+      if (proposedToolCalls.length > 0) {
+        await supabase.from('audit_log').insert({
+          action: 'ai_assistant_draft',
+          entity_type: 'ai_assistant',
+          entity_id: requestData.device_id,
+          device_id: requestData.device_id,
+          device_type: requestData.device_type,
+          initiated_by: 'ai_assistant',
+          request_data: {
+            prompt: requestData.prompt,
+            mode: 'draft',
+            proposed_tools: proposedToolCalls.map(tc => tc.tool)
+          },
+          outcome: 'success'
+        });
+      }
 
       return new Response(
         JSON.stringify({
@@ -849,7 +926,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
             call.tool,
             call.args,
             supabaseUrlExec,
-            authHeader,
+            serviceRoleKey,
             requestData.device_id,
             supabase
           );
