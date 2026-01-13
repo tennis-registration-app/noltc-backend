@@ -23,6 +23,7 @@ interface Bucket {
 }
 
 interface UsageComparisonResponse {
+  ok: boolean;
   metric: "usage" | "waittime";
   unit: "hours" | "minutes";
   granularity: "day" | "week" | "month";
@@ -129,6 +130,7 @@ serve(async (req) => {
     }));
 
     const response: UsageComparisonResponse = {
+      ok: true,
       metric: metric,
       unit: metric === "usage" ? "hours" : "minutes",
       granularity: effectiveGranularity,
