@@ -476,6 +476,13 @@ serve(async (req) => {
       wm.participant_type === 'member' ? wm.members?.display_name : wm.guest_name
     )
 
+    const participantDetails = waitlistMembers.map(wm => ({
+      name: wm.members?.display_name || wm.guest_name || 'Unknown',
+      accountId: wm.account_id || null,
+      memberId: wm.member_id || null,
+      isGuest: !wm.member_id
+    }))
+
     // ===========================================
     // AUDIT LOG - SUCCESS
     // ===========================================
@@ -528,6 +535,7 @@ serve(async (req) => {
         started_at: session.started_at,
         scheduled_end_at: session.scheduled_end_at,
         participants: participantNames,
+        participantDetails: participantDetails,
       },
       waitlist: {
         id: waitlistEntry.id,
