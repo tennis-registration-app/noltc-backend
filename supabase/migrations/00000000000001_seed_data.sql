@@ -94,4 +94,9 @@ INSERT INTO system_settings (key, value) VALUES
   -- Geofence (NOLTC club location)
   ('club_latitude', '29.91901'),
   ('club_longitude', '-90.11481'),
-  ('geofence_radius_meters', '80');
+  ('geofence_radius_meters', '80'),
+
+  -- Auto-clear settings
+  ('auto_clear_enabled', 'false'),
+  ('auto_clear_minutes', '180'),
+  ('check_status_minutes', '150');

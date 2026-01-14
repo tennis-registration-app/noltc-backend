@@ -33,6 +33,9 @@ const VALID_SETTINGS_KEYS = [
   'guest_fee_weekend_cents',
   'singles_duration_minutes',
   'doubles_duration_minutes',
+  'auto_clear_enabled',
+  'auto_clear_minutes',
+  'check_status_minutes',
 ]
 
 serve(async (req) => {
@@ -99,10 +102,28 @@ serve(async (req) => {
           throw new Error(`Invalid settings key: ${key}`)
         }
 
-        // Validate numeric values
-        const numValue = parseInt(value)
-        if (isNaN(numValue) || numValue < 0) {
-          throw new Error(`Invalid value for ${key}: must be a non-negative number`)
+        // Validate auto_clear_enabled (boolean string)
+        if (key === 'auto_clear_enabled') {
+          if (value !== 'true' && value !== 'false') {
+            throw new Error(`Invalid value for auto_clear_enabled: must be 'true' or 'false'`)
+          }
+          // Skip numeric validation for boolean
+        } else if (key === 'auto_clear_minutes') {
+          const numValue = parseInt(value)
+          if (isNaN(numValue) || numValue < 60 || numValue > 720) {
+            throw new Error(`Invalid value for auto_clear_minutes: must be between 60 and 720`)
+          }
+        } else if (key === 'check_status_minutes') {
+          const numValue = parseInt(value)
+          if (isNaN(numValue) || numValue < 30 || numValue > 600) {
+            throw new Error(`Invalid value for check_status_minutes: must be between 30 and 600`)
+          }
+        } else {
+          // Validate numeric values for other settings
+          const numValue = parseInt(value)
+          if (isNaN(numValue) || numValue < 0) {
+            throw new Error(`Invalid value for ${key}: must be a non-negative number`)
+          }
         }
 
         const { error } = await supabase
@@ -118,6 +139,37 @@ serve(async (req) => {
         }
 
         updatedSettings[key] = value
+      }
+
+      // Cross-field validation: check_status_minutes must be less than auto_clear_minutes
+      // Check both incoming values AND existing DB values
+      const incomingAutoMinutes = requestData.settings.auto_clear_minutes
+      const incomingCheckMinutes = requestData.settings.check_status_minutes
+
+      if (incomingAutoMinutes || incomingCheckMinutes) {
+        // Fetch current values from DB if not in request
+        let autoMinutes = incomingAutoMinutes ? parseInt(incomingAutoMinutes) : null
+        let checkMinutes = incomingCheckMinutes ? parseInt(incomingCheckMinutes) : null
+
+        if (autoMinutes === null || checkMinutes === null) {
+          const { data: currentSettings } = await supabase
+            .from('system_settings')
+            .select('key, value')
+            .in('key', ['auto_clear_minutes', 'check_status_minutes'])
+
+          for (const setting of currentSettings || []) {
+            if (setting.key === 'auto_clear_minutes' && autoMinutes === null) {
+              autoMinutes = parseInt(setting.value)
+            }
+            if (setting.key === 'check_status_minutes' && checkMinutes === null) {
+              checkMinutes = parseInt(setting.value)
+            }
+          }
+        }
+
+        if (autoMinutes && checkMinutes && checkMinutes >= autoMinutes) {
+          throw new Error(`check_status_minutes (${checkMinutes}) must be less than auto_clear_minutes (${autoMinutes})`)
+        }
       }
 
       results.settings = updatedSettings
