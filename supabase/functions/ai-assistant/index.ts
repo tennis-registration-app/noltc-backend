@@ -358,7 +358,14 @@ async function executeToolViaEndpoint(
     get_court_status: { endpoint: 'get-board' },
     get_session_history: { endpoint: 'get-session-history' },
     get_transactions: { endpoint: 'get-transactions' },
-    get_blocks: { endpoint: 'get-blocks' },
+    get_blocks: {
+      endpoint: 'get-blocks',
+      transformArgs: async (args, _supabase, deviceId) => ({
+        ...args,
+        device_id: deviceId,
+        device_type: 'admin'
+      })
+    },
     get_analytics: {
       endpoint: 'get-analytics',
       transformArgs: async (args, _supabase, _deviceId) => {
@@ -396,7 +403,9 @@ async function executeToolViaEndpoint(
 
   let response: Response;
 
-  if (isReadTool && toolName !== 'get_court_status') {
+  // get_blocks needs POST with JSON body (not GET with query params)
+  const needsPostWithBody = ['get_blocks'];
+  if (isReadTool && toolName !== 'get_court_status' && !needsPostWithBody.includes(toolName)) {
     // GET request with query params
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(transformedArgs)) {
@@ -462,10 +471,11 @@ async function checkRateLimit(
     .gte('created_at', windowStart);
 
   if (countError) {
-    console.error('Rate limit check error:', countError);
+    console.error('[AI Debug] Rate limit check error:', countError);
     // Fail open - allow request if we can't check
     return { ok: true };
   }
+  console.log('[AI Debug] Rate limit check - count:', count, 'limit:', RATE_LIMIT);
 
   if (count && count >= RATE_LIMIT) {
     return {
@@ -944,6 +954,12 @@ IMPORTANT RULES:
 
 The user is an administrator with full access to manage courts, blocks, and settings.`
 
+    console.log('[AI Debug] Mode:', mode);
+    console.log('[AI Debug] Tools count:', filteredTools.length);
+    console.log('[AI Debug] Tool names:', filteredTools.map(t => t.name));
+    console.log('[AI Debug] System prompt length:', systemPrompt.length);
+    console.log('[AI Debug] User prompt:', requestData.prompt);
+
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -968,6 +984,10 @@ The user is an administrator with full access to manage courts, blocks, and sett
     }
 
     const aiResult = await anthropicResponse.json()
+
+    console.log('[AI Debug] Stop reason:', aiResult.stop_reason);
+    console.log('[AI Debug] Content blocks:', aiResult.content?.map((b: any) => b.type));
+    console.log('[AI Debug] Tool calls:', aiResult.content?.filter((b: any) => b.type === 'tool_use').map((b: any) => b.name));
 
     // === DRAFT MODE: Propose actions without executing ===
     if (mode === 'draft') {
@@ -1000,14 +1020,18 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
       // If all proposed tools are read-only, execute immediately (no confirmation needed)
       const allReadOnly = proposedToolCalls.every(tc => TOOL_RISKS[tc.tool]?.level === 'read');
+      console.log('[AI Debug] Proposed tool calls:', proposedToolCalls.length);
+      console.log('[AI Debug] All read-only:', allReadOnly);
 
       if (allReadOnly && proposedToolCalls.length > 0) {
         // Execute read-only tools directly
+        console.log('[AI Debug] Executing read-only tools directly');
         const executedActions: AiAssistantResponse['executed_actions'] = [];
         const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
         const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
         for (const call of proposedToolCalls) {
+          console.log('[AI Debug] Executing tool:', call.tool, 'with args:', JSON.stringify(call.args));
           try {
             const result = await executeToolViaEndpoint(
               call.tool,
@@ -1017,6 +1041,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
               requestData.device_id,
               supabase
             );
+            console.log('[AI Debug] Tool result ok:', result.ok, 'error:', result.error);
             executedActions.push({
               tool: call.tool,
               success: result.ok,
@@ -1024,6 +1049,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
               error: result.error
             });
           } catch (err: any) {
+            console.log('[AI Debug] Tool exception:', err.message);
             executedActions.push({
               tool: call.tool,
               success: false,
@@ -1037,6 +1063,9 @@ The user is an administrator with full access to manage courts, blocks, and sett
           .filter(a => a.success && a.result)
           .map(a => `Data from ${a.tool}:\n${JSON.stringify(a.result, null, 2)}`)
           .join('\n\n');
+
+        console.log('[AI Debug] Data context length:', dataContext.length);
+        console.log('[AI Debug] Successful tools:', executedActions.filter(a => a.success).map(a => a.tool));
 
         const followUpResponse = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -1060,6 +1089,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
         let naturalResponse = textResponse || 'Here is what I found:';
         if (followUpResponse.ok) {
           const followUpResult = await followUpResponse.json();
+          console.log('[AI Debug] Follow-up response received');
           const followUpText = followUpResult.content
             ?.filter((block: any) => block.type === 'text')
             .map((block: any) => block.text)
@@ -1067,6 +1097,8 @@ The user is an administrator with full access to manage courts, blocks, and sett
           if (followUpText) {
             naturalResponse = followUpText;
           }
+        } else {
+          console.log('[AI Debug] Follow-up response failed:', followUpResponse.status);
         }
 
         return new Response(
