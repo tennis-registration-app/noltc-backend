@@ -916,6 +916,13 @@ IMPORTANT - TIMEZONE:
 CURRENT SYSTEM STATE:
 ${contextStr}
 
+NOTE: The above shows ONLY current court status and currently-active blocks. It does NOT include:
+- Future scheduled blocks (use get_blocks tool)
+- Past session history (use get_session_history tool)
+- Analytics or usage patterns (use get_analytics tool)
+- Transaction history (use get_transactions tool)
+If a user asks about anything not visible above, USE THE APPROPRIATE TOOL.
+
 YOUR CAPABILITIES:
 - View court status, session history, transactions, and scheduled blocks (read operations)
 - Create and cancel court blocks for maintenance, lessons, clinics, etc.
