@@ -360,11 +360,20 @@ async function executeToolViaEndpoint(
     get_transactions: { endpoint: 'get-transactions' },
     get_blocks: {
       endpoint: 'get-blocks',
-      transformArgs: async (args, _supabase, deviceId) => ({
-        ...args,
-        device_id: deviceId,
-        device_type: 'admin'
-      })
+      transformArgs: async (args, _supabase, deviceId) => {
+        const transformed: Record<string, unknown> = {
+          ...args,
+          device_id: deviceId,
+          device_type: 'admin'
+        };
+        // If a single date is provided, convert to full day range
+        if (args.date && !args.from_date && !args.to_date) {
+          transformed.from_date = `${args.date}T00:00:00Z`;
+          transformed.to_date = `${args.date}T23:59:59Z`;
+          delete transformed.date;
+        }
+        return transformed;
+      }
     },
     get_analytics: {
       endpoint: 'get-analytics',
