@@ -922,15 +922,16 @@ serve(async (req) => {
 
     const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system.
 
-IMPORTANT - TIMEZONE:
+IMPORTANT - DATE AND TIMEZONE:
+- Current date/time: ${serverNow} (UTC)
+- Current year: ${new Date(serverNow).getFullYear()}
 - The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
-- Current time: ${serverNow} (UTC)
+- When users say "this year" they mean ${new Date(serverNow).getFullYear()}
 - When users mention times like "9am" or "2pm", they mean Central Time
-- When creating blocks, convert user's local time to UTC:
-  - Central Standard Time (CST) is UTC-6
-  - Central Daylight Time (CDT) is UTC-5
-  - Currently it is January, so CST (UTC-6) applies
-  - Example: User says "9am" → use "15:00:00Z" (9 + 6 = 15)
+- When creating blocks or holiday hours, convert user's local time to UTC:
+  - Central Standard Time (CST) is UTC-6 (Nov-Mar)
+  - Central Daylight Time (CDT) is UTC-5 (Mar-Nov)
+  - Example: User says "9am" in January → use "15:00:00Z" (9 + 6 = 15)
 
 CURRENT SYSTEM STATE:
 ${contextStr}
