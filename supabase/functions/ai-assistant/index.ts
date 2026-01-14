@@ -338,6 +338,7 @@ async function executeToolViaEndpoint(
     add_holiday_hours: {
       endpoint: 'update-system-settings',
       transformArgs: async (args, _supabase, deviceId) => {
+        console.log('[AI Debug] add_holiday_hours args:', JSON.stringify(args));
         const override: Record<string, unknown> = {
           date: args.date,
           is_closed: args.is_closed
@@ -349,10 +350,14 @@ async function executeToolViaEndpoint(
         if (args.reason) {
           override.reason = args.reason;
         }
-        return {
+        const transformed = {
           device_id: deviceId,
-          operating_hours_override: override
+          device_type: 'admin',
+          operating_hours_override: override,
+          initiated_by: 'ai_assistant'
         };
+        console.log('[AI Debug] add_holiday_hours transformed:', JSON.stringify(transformed));
+        return transformed;
       }
     },
     get_court_status: { endpoint: 'get-board' },
