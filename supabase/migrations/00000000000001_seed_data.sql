@@ -99,4 +99,7 @@ INSERT INTO system_settings (key, value) VALUES
   -- Auto-clear settings
   ('auto_clear_enabled', 'false'),
   ('auto_clear_minutes', '180'),
-  ('check_status_minutes', '150');
+  ('check_status_minutes', '150'),
+
+  -- Block warning settings
+  ('block_warning_minutes', '60');

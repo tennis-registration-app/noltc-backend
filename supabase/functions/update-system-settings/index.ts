@@ -36,6 +36,7 @@ const VALID_SETTINGS_KEYS = [
   'auto_clear_enabled',
   'auto_clear_minutes',
   'check_status_minutes',
+  'block_warning_minutes',
 ]
 
 serve(async (req) => {
@@ -117,6 +118,11 @@ serve(async (req) => {
           const numValue = parseInt(value)
           if (isNaN(numValue) || numValue < 30 || numValue > 600) {
             throw new Error(`Invalid value for check_status_minutes: must be between 30 and 600`)
+          }
+        } else if (key === 'block_warning_minutes') {
+          const numValue = parseInt(value)
+          if (isNaN(numValue) || numValue < 15 || numValue > 120) {
+            throw new Error(`Invalid value for block_warning_minutes: must be between 15 and 120`)
           }
         } else {
           // Validate numeric values for other settings
