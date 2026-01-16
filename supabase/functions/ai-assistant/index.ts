@@ -132,10 +132,13 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
 // Validate tool args before signing into token
 function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
   switch (toolName) {
-    case 'create_block':
-      if (!args.court_number || typeof args.court_number !== 'number') {
-        return { ok: false, error: 'create_block requires valid court_number' };
+    case 'create_block': {
+      const courtNum = Number(args.court_number);
+      if (!args.court_number || isNaN(courtNum) || courtNum < 1 || courtNum > 12) {
+        return { ok: false, error: 'create_block requires valid court_number (1-12)' };
       }
+      // Coerce to number for downstream use
+      args.court_number = courtNum;
       if (!args.block_type || typeof args.block_type !== 'string') {
         return { ok: false, error: 'create_block requires block_type' };
       }
@@ -143,11 +146,21 @@ function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok
         return { ok: false, error: 'create_block requires starts_at and ends_at' };
       }
       break;
-    case 'cancel_block':
+    }
+    case 'cancel_block': {
+      // Coerce court_number if provided
+      if (args.court_number) {
+        const courtNum = Number(args.court_number);
+        if (isNaN(courtNum) || courtNum < 1 || courtNum > 12) {
+          return { ok: false, error: 'cancel_block court_number must be 1-12' };
+        }
+        args.court_number = courtNum;
+      }
       if (!args.block_id && !args.court_number) {
         return { ok: false, error: 'cancel_block requires block_id or court_number' };
       }
       break;
+    }
     case 'update_settings':
       const SETTINGS_ALLOWLIST: Record<string, { type: string; min: number; max: number }> = {
         ballPrice: { type: 'number', min: 0, max: 100 },
@@ -440,8 +453,8 @@ async function executeToolViaEndpoint(
     });
   } else {
     // POST request with body
-    console.log('Calling endpoint:', `${supabaseUrl}/functions/v1/${actualEndpoint}`);
-    console.log('Using service role key (first 20 chars):', serviceRoleKey?.substring(0, 20));
+    console.log('[AI Debug] Calling POST endpoint:', `${supabaseUrl}/functions/v1/${actualEndpoint}`);
+    console.log('[AI Debug] Request body:', JSON.stringify(transformedArgs));
     response = await fetch(`${supabaseUrl}/functions/v1/${actualEndpoint}`, {
       method: 'POST',
       headers: {
@@ -455,7 +468,18 @@ async function executeToolViaEndpoint(
     });
   }
 
-  const result = await response.json();
+  // Debug logging for endpoint response
+  const responseText = await response.text();
+  console.log('[AI Debug] Endpoint response status:', response.status);
+  console.log('[AI Debug] Endpoint response body:', responseText.substring(0, 500));
+
+  let result;
+  try {
+    result = JSON.parse(responseText);
+  } catch (e) {
+    console.log('[AI Debug] Failed to parse JSON response');
+    return { ok: false, error: `Invalid JSON response: ${responseText.substring(0, 100)}` };
+  }
 
   if (!response.ok || result.ok === false) {
     return {
@@ -1185,8 +1209,10 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
     // === EXECUTE MODE: Verify token and execute proposed actions ===
     if (mode === 'execute') {
+      console.log('[AI Debug] Entering execute mode with token:', actionsToken?.substring(0, 20) + '...');
       // Verify the actions token
       const tokenResult = await verifyActionsToken(actionsToken!, requestData.device_id);
+      console.log('[AI Debug] Token verification result:', tokenResult.ok, tokenResult.error || 'no error');
       if (!tokenResult.ok) {
         return new Response(
           JSON.stringify({ ok: false, error: tokenResult.error }),
@@ -1195,6 +1221,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
       }
 
       const proposedCalls = tokenResult.proposedCalls;
+      console.log('[AI Debug] Proposed calls to execute:', proposedCalls?.length, JSON.stringify(proposedCalls?.map(c => c.tool)));
 
       // Check if high-risk actions require confirmation
       const hasHighRisk = hasHighRiskTools(proposedCalls.map(tc => ({ name: tc.tool })));
@@ -1265,15 +1292,17 @@ The user is an administrator with full access to manage courts, blocks, and sett
       });
 
       const allSucceeded = executedActions.every(a => a.success);
+      const executeResponse = {
+        ok: allSucceeded,
+        mode: 'execute',
+        response: allSucceeded
+          ? `Successfully executed ${executedActions.length} action(s).`
+          : 'Some actions failed. See executed_actions for details.',
+        executed_actions: executedActions
+      };
+      console.log('[AI Debug] Execute mode returning:', JSON.stringify(executeResponse));
       return new Response(
-        JSON.stringify({
-          ok: allSucceeded,
-          mode: 'execute',
-          response: allSucceeded
-            ? `Successfully executed ${executedActions.length} action(s).`
-            : 'Some actions failed. See executed_actions for details.',
-          executed_actions: executedActions
-        } as AiAssistantResponse),
+        JSON.stringify(executeResponse as AiAssistantResponse),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
