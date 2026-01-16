@@ -133,15 +133,26 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
 function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
   switch (toolName) {
     case 'create_block': {
+      console.log('[AI Debug] create_block args received:', JSON.stringify(args));
+
       const courtNum = Number(args.court_number);
       if (!args.court_number || isNaN(courtNum) || courtNum < 1 || courtNum > 12) {
         return { ok: false, error: 'create_block requires valid court_number (1-12)' };
       }
       // Coerce to number for downstream use
       args.court_number = courtNum;
+
+      // Validate and normalize block_type (case-insensitive)
+      const VALID_BLOCK_TYPES = ['lesson', 'clinic', 'maintenance', 'wet', 'other'];
       if (!args.block_type || typeof args.block_type !== 'string') {
         return { ok: false, error: 'create_block requires block_type' };
       }
+      const normalizedBlockType = (args.block_type as string).toLowerCase().trim();
+      if (!VALID_BLOCK_TYPES.includes(normalizedBlockType)) {
+        return { ok: false, error: `create_block block_type must be one of: ${VALID_BLOCK_TYPES.join(', ')}` };
+      }
+      args.block_type = normalizedBlockType;
+
       if (!args.starts_at || !args.ends_at) {
         return { ok: false, error: 'create_block requires starts_at and ends_at' };
       }
