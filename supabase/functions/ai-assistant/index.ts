@@ -973,7 +973,12 @@ serve(async (req) => {
 IMPORTANT - DATE AND TIMEZONE:
 - Current date/time: ${serverNow} (UTC)
 - Today is: ${todayString}
-- When users say "tomorrow", "Saturday", etc., calculate the correct date from today's date above
+- IMPORTANT: Calculate dates carefully from today's date:
+  - Today (${dayNames[centralDate.getUTCDay()]}) = ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate()}
+  - Tomorrow = ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate() + 1}
+  - Days of week: Sunday=0, Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6
+  - To find "next Tuesday": count forward from today until you reach Tuesday
+  - Example: If today is Thursday (4), then Tuesday (2) is in 5 days (Fri=1, Sat=2, Sun=3, Mon=4, Tue=5)
 - The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
 - When users say "this year" they mean ${new Date(serverNow).getFullYear()}
 - When users mention times like "9am" or "2pm", they mean Central Time
