@@ -964,7 +964,8 @@ serve(async (req) => {
 
 IMPORTANT - DATE AND TIMEZONE:
 - Current date/time: ${serverNow} (UTC)
-- Current year: ${new Date(serverNow).getFullYear()}
+- Today is: ${new Date(serverNow).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' })}
+- When users say "tomorrow", "Saturday", etc., calculate the correct date from today's date above
 - The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
 - When users say "this year" they mean ${new Date(serverNow).getFullYear()}
 - When users mention times like "9am" or "2pm", they mean Central Time
