@@ -1252,10 +1252,10 @@ The user is an administrator with full access to manage courts, blocks, and sett
         );
       }
 
-      // Hard guard: max 5 actions per request
-      if (proposedCalls.length > 5) {
+      // Hard guard: max 15 actions per request
+      if (proposedCalls.length > 15) {
         return new Response(
-          JSON.stringify({ ok: false, error: 'Too many actions. Maximum 5 per request.' }),
+          JSON.stringify({ ok: false, error: 'Too many actions. Maximum 15 per request.' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
