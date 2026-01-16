@@ -1019,7 +1019,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
+        max_tokens: 4096,
         system: systemPrompt,
         tools: filteredTools,
         messages: [
@@ -1046,6 +1046,12 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
       for (const block of aiResult.content) {
         if (block.type === 'tool_use') {
+          // Skip tool calls with empty or missing args
+          if (!block.input || Object.keys(block.input as object).length === 0) {
+            console.log('[AI Debug] Skipping tool call with empty args:', block.name);
+            continue;
+          }
+
           // Validate args before signing into token
           const validation = validateToolArgs(block.name, block.input as Record<string, unknown>);
           if (!validation.ok) {
@@ -1126,7 +1132,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
           },
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
-            max_tokens: 1024,
+            max_tokens: 4096,
             messages: [
               {
                 role: 'user',
@@ -1368,7 +1374,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
+          max_tokens: 4096,
           system: systemPrompt,
           tools: filteredTools,
           messages: followUpMessages
