@@ -968,17 +968,21 @@ serve(async (req) => {
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const todayString = `${dayNames[centralDate.getUTCDay()]}, ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate()}, ${centralDate.getUTCFullYear()}`;
 
+    // Generate next 7 days for reference
+    const next7Days = [];
+    for (let i = 0; i < 7; i++) {
+      const futureDate = new Date(centralDate.getTime() + i * 24 * 60 * 60 * 1000);
+      next7Days.push(`${dayNames[futureDate.getUTCDay()]} = ${monthNames[futureDate.getUTCMonth()]} ${futureDate.getUTCDate()}`);
+    }
+    const next7DaysString = next7Days.join(', ');
+
     const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system.
 
 IMPORTANT - DATE AND TIMEZONE:
 - Current date/time: ${serverNow} (UTC)
 - Today is: ${todayString}
-- IMPORTANT: Calculate dates carefully from today's date:
-  - Today (${dayNames[centralDate.getUTCDay()]}) = ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate()}
-  - Tomorrow = ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate() + 1}
-  - Days of week: Sunday=0, Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6
-  - To find "next Tuesday": count forward from today until you reach Tuesday
-  - Example: If today is Thursday (4), then Tuesday (2) is in 5 days (Fri=1, Sat=2, Sun=3, Mon=4, Tue=5)
+- Next 7 days: ${next7DaysString}
+- USE THE DATES ABOVE when users say "this Tuesday", "Saturday", etc. Do not calculate - just look up the day in the list above.
 - The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
 - When users say "this year" they mean ${new Date(serverNow).getFullYear()}
 - When users mention times like "9am" or "2pm", they mean Central Time
