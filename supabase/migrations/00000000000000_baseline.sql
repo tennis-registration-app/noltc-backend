@@ -575,7 +575,7 @@ RETURNS TABLE (
 DECLARE
   end_of_today TIMESTAMPTZ;
 BEGIN
-  end_of_today := date_trunc('day', request_time) + INTERVAL '1 day' - INTERVAL '1 second';
+  end_of_today := (date_trunc('day', request_time AT TIME ZONE 'America/Chicago') + INTERVAL '1 day' - INTERVAL '1 second') AT TIME ZONE 'America/Chicago';
 
   RETURN QUERY
   SELECT
