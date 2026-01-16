@@ -960,11 +960,19 @@ serve(async (req) => {
 
     const contextStr = shapeContext(courts, waitlist, settings);
 
+    // Calculate Central Time date explicitly (Deno may not support timeZone in toLocaleDateString)
+    const utcDate = new Date(serverNow);
+    const centralOffset = -6; // CST is UTC-6 (use -5 for CDT in summer - January is CST)
+    const centralDate = new Date(utcDate.getTime() + centralOffset * 60 * 60 * 1000);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const todayString = `${dayNames[centralDate.getUTCDay()]}, ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate()}, ${centralDate.getUTCFullYear()}`;
+
     const systemPrompt = `You are an AI administrative assistant for the New Orleans Lawn Tennis Club (NOLTC) court management system.
 
 IMPORTANT - DATE AND TIMEZONE:
 - Current date/time: ${serverNow} (UTC)
-- Today is: ${new Date(serverNow).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' })}
+- Today is: ${todayString}
 - When users say "tomorrow", "Saturday", etc., calculate the correct date from today's date above
 - The club is located in New Orleans, Louisiana (Central Time - America/Chicago)
 - When users say "this year" they mean ${new Date(serverNow).getFullYear()}
@@ -1010,6 +1018,8 @@ The user is an administrator with full access to manage courts, blocks, and sett
     console.log('[AI Debug] Tool names:', filteredTools.map(t => t.name));
     console.log('[AI Debug] System prompt length:', systemPrompt.length);
     console.log('[AI Debug] User prompt:', requestData.prompt);
+    console.log('[AI Debug] serverNow (UTC):', serverNow);
+    console.log('[AI Debug] Today in Central (explicit calc):', todayString);
 
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
