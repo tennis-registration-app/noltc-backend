@@ -21,6 +21,26 @@ interface AssignFromWaitlistRequest {
   location_token?: string  // QR-based location verification
 }
 
+// Generate participant key for re-registration matching
+// Format: sorted "m:<member_id>" and "g:<normalized_guest_name>" joined by "|"
+function generateParticipantKey(participants: Array<{ type: string; member_id?: string | null; guest_name?: string | null }>): string {
+  const keys: string[] = [];
+
+  for (const p of participants) {
+    if (p.type === 'member' && p.member_id) {
+      keys.push(`m:${p.member_id}`);
+    } else if (p.type === 'guest' && p.guest_name) {
+      // Normalize: lowercase, trim, collapse multiple spaces
+      const normalized = p.guest_name.toLowerCase().trim().replace(/\s+/g, ' ');
+      keys.push(`g:${normalized}`);
+    }
+  }
+
+  // Sort for consistent ordering
+  keys.sort();
+  return keys.join('|');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -204,6 +224,13 @@ serve(async (req) => {
       throw new Error('No participants found for waitlist entry')
     }
 
+    // Generate participant key from waitlist members
+    const participantKey = generateParticipantKey(waitlistMembers.map(wm => ({
+      type: wm.participant_type,
+      member_id: wm.member_id,
+      guest_name: wm.guest_name,
+    })));
+
     // ===========================================
     // VERIFY COURT EXISTS AND IS AVAILABLE
     // ===========================================
@@ -310,11 +337,38 @@ serve(async (req) => {
       : (waitlistEntry.group_type === 'singles' ? 60 : 90)
 
     // ===========================================
+    // CHECK FOR RE-REGISTRATION (same group cleared early)
+    // ===========================================
+
+    let inheritedEndTime: Date | null = null;
+
+    if (participantKey) {
+      const { data: previousSession } = await supabase
+        .from('sessions')
+        .select('id, scheduled_end_at, actual_end_at')
+        .eq('participant_key', participantKey)
+        .not('actual_end_at', 'is', null)  // Session was ended/cleared
+        .gt('scheduled_end_at', new Date().toISOString())  // Original end time still in future
+        .order('actual_end_at', { ascending: false })  // Most recent first
+        .limit(1)
+        .maybeSingle();
+
+      if (previousSession) {
+        inheritedEndTime = new Date(previousSession.scheduled_end_at);
+        console.log('[assign-from-waitlist] Re-registration detected, participant_key:', participantKey);
+        console.log('[assign-from-waitlist] Inheriting end time from session:', previousSession.id, inheritedEndTime.toISOString());
+      }
+    }
+
+    // ===========================================
     // CREATE SESSION
     // ===========================================
 
     const startedAt = new Date()
-    const scheduledEndAt = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
+    const newEndTime = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
+    const scheduledEndAt = inheritedEndTime
+      ? new Date(Math.min(newEndTime.getTime(), inheritedEndTime.getTime()))
+      : newEndTime
 
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
@@ -325,6 +379,7 @@ serve(async (req) => {
         started_at: startedAt.toISOString(),
         scheduled_end_at: scheduledEndAt.toISOString(),
         created_by_device_id: requestData.device_id,
+        participant_key: participantKey,
       })
       .select()
       .single()
@@ -543,6 +598,8 @@ serve(async (req) => {
         status: 'assigned',
       },
       positions_updated: entriesToUpdate?.length || 0,
+      isInheritedEndTime: !!inheritedEndTime,
+      inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
