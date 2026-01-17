@@ -50,9 +50,39 @@ serve(async (req) => {
       )
     }
 
-    // Cache miss - new or inactive member, return empty
+    // Cache miss - call live RPC and trigger background cache refresh
+    console.log('[get-frequent-partners] Cache miss for member:', member_id)
+
+    // Call live RPC function
+    const { data: livePartners, error: rpcError } = await supabaseClient
+      .rpc('get_frequent_partners', { p_member_id: member_id })
+
+    if (rpcError) {
+      console.error('[get-frequent-partners] RPC error:', rpcError)
+      // Return empty on error rather than failing
+      return new Response(
+        JSON.stringify({ ok: true, partners: [], cached_at: null, source: 'error' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Transform RPC result to match cache format
+    const partners = (livePartners || []).map((p: any) => ({
+      member_id: p.member_id,
+      display_name: p.display_name,
+      member_number: p.member_number,
+      play_count: p.play_count,
+      is_recent: p.is_recent
+    }))
+
+    // Trigger background cache refresh (fire-and-forget)
+    supabaseClient
+      .rpc('refresh_single_member_cache', { p_member_id: member_id })
+      .then(() => console.log('[get-frequent-partners] Cache refreshed for:', member_id))
+      .catch((err: any) => console.error('[get-frequent-partners] Cache refresh failed:', err))
+
     return new Response(
-      JSON.stringify({ ok: true, partners: [], cached_at: null }),
+      JSON.stringify({ ok: true, partners, cached_at: null, source: 'live' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
