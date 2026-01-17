@@ -736,6 +736,7 @@ serve(async (req) => {
             restoreUntil,
             participants: displacedPlayerNames,
           } : null,
+          timeLimitReason: inheritedEndTime ? 'rereg' : null,
           isInheritedEndTime: !!inheritedEndTime,
           inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,
         },

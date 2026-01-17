@@ -579,6 +579,7 @@ serve(async (req) => {
         status: 'assigned',
       },
       positions_updated: entriesToUpdate?.length || 0,
+      timeLimitReason: inheritedEndTime ? 'rereg' : null,
       isInheritedEndTime: !!inheritedEndTime,
       inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,
     }), {
