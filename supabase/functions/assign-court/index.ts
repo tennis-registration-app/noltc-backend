@@ -39,6 +39,26 @@ interface AssignCourtRequest {
   location_token?: string  // QR-based location verification
 }
 
+// Generate participant key for re-registration matching
+// Format: sorted "m:<member_id>" and "g:<normalized_guest_name>" joined by "|"
+function generateParticipantKey(participants: Array<{ type: string; member_id?: string; guest_name?: string }>): string {
+  const keys: string[] = [];
+
+  for (const p of participants) {
+    if (p.type === 'member' && p.member_id) {
+      keys.push(`m:${p.member_id}`);
+    } else if (p.type === 'guest' && p.guest_name) {
+      // Normalize: lowercase, trim, collapse multiple spaces
+      const normalized = p.guest_name.toLowerCase().trim().replace(/\s+/g, ' ');
+      keys.push(`g:${normalized}`);
+    }
+  }
+
+  // Sort for consistent ordering
+  keys.sort();
+  return keys.join('|');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -470,6 +490,31 @@ serve(async (req) => {
     }
 
     // ===========================================
+    // CHECK FOR RE-REGISTRATION (same group cleared early)
+    // ===========================================
+
+    const participantKey = generateParticipantKey(requestData.participants);
+    let inheritedEndTime: Date | null = null;
+
+    if (participantKey) {
+      const { data: previousSession } = await supabase
+        .from('sessions')
+        .select('id, scheduled_end_at, actual_end_at')
+        .eq('participant_key', participantKey)
+        .not('actual_end_at', 'is', null)  // Session was ended/cleared
+        .gt('scheduled_end_at', new Date().toISOString())  // Original end time still in future
+        .order('actual_end_at', { ascending: false })  // Most recent first
+        .limit(1)
+        .maybeSingle();
+
+      if (previousSession) {
+        inheritedEndTime = new Date(previousSession.scheduled_end_at);
+        console.log('[assign-court] Re-registration detected, participant_key:', participantKey);
+        console.log('[assign-court] Inheriting end time from session:', previousSession.id, inheritedEndTime.toISOString());
+      }
+    }
+
+    // ===========================================
     // GET DURATION FROM SETTINGS
     // ===========================================
 
@@ -490,7 +535,10 @@ serve(async (req) => {
     // ===========================================
 
     const startedAt = new Date()
-    const scheduledEndAt = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
+    const newEndTime = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
+    const scheduledEndAt = inheritedEndTime
+      ? new Date(Math.min(newEndTime.getTime(), inheritedEndTime.getTime()))
+      : newEndTime
 
     console.log(`[assign-court] About to create new session on court ${requestData.court_id}`, {
       displacedSessionId,
@@ -508,6 +556,7 @@ serve(async (req) => {
         started_at: startedAt.toISOString(),
         scheduled_end_at: scheduledEndAt.toISOString(),
         created_by_device_id: requestData.device_id,
+        participant_key: participantKey,
       })
       .select()
       .single()
@@ -706,6 +755,8 @@ serve(async (req) => {
             restoreUntil,
             participants: displacedPlayerNames,
           } : null,
+          isInheritedEndTime: !!inheritedEndTime,
+          inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,
         },
         serverNow
       )
