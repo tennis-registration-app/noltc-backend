@@ -11,110 +11,66 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
   try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
     const url = new URL(req.url)
-    const dateStart = url.searchParams.get('date_start')
-    const dateEnd = url.searchParams.get('date_end')
+    const memberName = url.searchParams.get('member_name') || null
+    const dateStart = url.searchParams.get('date_start') || null
+    const dateEnd = url.searchParams.get('date_end') || null
     const courtNumber = url.searchParams.get('court_number')
-    const memberName = url.searchParams.get('member_name')
-    const limit = parseInt(url.searchParams.get('limit') || '50')
+      ? parseInt(url.searchParams.get('court_number')!)
+      : null
+    const limit = parseInt(url.searchParams.get('limit') || '100')
 
-    let query = supabase
-      .from('sessions')
-      .select(`
-        id,
-        session_type,
-        duration_minutes,
-        started_at,
-        scheduled_end_at,
-        actual_end_at,
-        end_reason,
-        courts(court_number, name),
-        session_participants(
-          participant_type,
-          guest_name,
-          members(display_name),
-          accounts(member_number)
-        )
-      `)
-      .not('actual_end_at', 'is', null)
-      .order('started_at', { ascending: false })
-      .limit(limit)
-
-    if (dateStart) {
-      query = query.gte('started_at', dateStart + 'T00:00:00Z')
-    }
-    if (dateEnd) {
-      query = query.lte('started_at', dateEnd + 'T23:59:59Z')
-    }
-    if (courtNumber) {
-      const { data: court } = await supabase
-        .from('courts')
-        .select('id')
-        .eq('court_number', parseInt(courtNumber))
-        .single()
-      if (court) {
-        query = query.eq('court_id', court.id)
-      }
-    }
-
-    const { data: sessions, error } = await query
+    // Call the RPC function - all filters applied at DB level before limit
+    const { data: sessions, error } = await supabase.rpc('search_session_history', {
+      p_member_name: memberName,
+      p_date_start: dateStart,
+      p_date_end: dateEnd,
+      p_court_number: courtNumber,
+      p_limit: limit
+    })
 
     if (error) {
-      throw new Error(`Failed to fetch sessions: ${error.message}`)
-    }
-
-    // Filter by member name if provided (post-query filter)
-    let filteredSessions = sessions
-    if (memberName) {
-      const searchLower = memberName.toLowerCase()
-      filteredSessions = sessions?.filter(s =>
-        s.session_participants?.some((p: any) => {
-          const name = p.participant_type === 'member'
-            ? p.members?.display_name
-            : p.guest_name
-          return name?.toLowerCase().includes(searchLower)
-        })
+      console.error('[get-session-history] RPC error:', error)
+      return new Response(
+        JSON.stringify({ ok: false, error: error.message }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       )
     }
 
-    const formattedSessions = filteredSessions?.map(s => ({
+    // Transform RPC result to match existing response format
+    const formattedSessions = (sessions || []).map((s: any) => ({
       id: s.id,
-      date: s.started_at.split('T')[0],
+      date: s.started_at?.split('T')[0],
       started_at: s.started_at,
       ended_at: s.actual_end_at,
       session_type: s.session_type,
       duration_minutes: s.duration_minutes,
       end_reason: s.end_reason,
-      court_number: s.courts?.court_number,
-      court_name: s.courts?.name,
-      participants: s.session_participants?.map((p: any) => ({
-        name: p.participant_type === 'member' ? p.members?.display_name : p.guest_name,
+      court_number: s.court_number,
+      court_name: null, // RPC doesn't return court name
+      participants: (s.participants || []).map((p: any) => ({
+        name: p.display_name,
         type: p.participant_type,
-        member_number: p.accounts?.member_number,
+        member_number: p.member_number,
       })),
     }))
 
-    return new Response(JSON.stringify({
-      ok: true,
-      count: formattedSessions?.length || 0,
-      sessions: formattedSessions,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    return new Response(
+      JSON.stringify({ ok: true, count: formattedSessions.length, sessions: formattedSessions }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
 
   } catch (error) {
-    return new Response(JSON.stringify({
-      ok: false,
-      error: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    console.error('[get-session-history] Error:', error)
+    return new Response(
+      JSON.stringify({ ok: false, error: error.message }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+    )
   }
 })
