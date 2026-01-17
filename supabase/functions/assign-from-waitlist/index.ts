@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
+import { generateParticipantKey } from "../_shared/participantKey.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,26 +20,6 @@ interface AssignFromWaitlistRequest {
   longitude?: number
   accuracy?: number  // GPS accuracy in meters
   location_token?: string  // QR-based location verification
-}
-
-// Generate participant key for re-registration matching
-// Format: sorted "m:<member_id>" and "g:<normalized_guest_name>" joined by "|"
-function generateParticipantKey(participants: Array<{ type: string; member_id?: string | null; guest_name?: string | null }>): string {
-  const keys: string[] = [];
-
-  for (const p of participants) {
-    if (p.type === 'member' && p.member_id) {
-      keys.push(`m:${p.member_id}`);
-    } else if (p.type === 'guest' && p.guest_name) {
-      // Normalize: lowercase, trim, collapse multiple spaces
-      const normalized = p.guest_name.toLowerCase().trim().replace(/\s+/g, ' ');
-      keys.push(`g:${normalized}`);
-    }
-  }
-
-  // Sort for consistent ordering
-  keys.sort();
-  return keys.join('|');
 }
 
 serve(async (req) => {
