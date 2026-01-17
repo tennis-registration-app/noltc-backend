@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { signalBoardChange } from "../_shared/sessionLifecycle.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -158,10 +159,8 @@ serve(async (req) => {
     // RETURN SUCCESS
     // ===========================================
 
-    // Insert board change signal for real-time updates
-    await supabase
-      .from("board_change_signals")
-      .insert({ change_type: "waitlist" });
+    // Signal board change for real-time updates (db insert + broadcast)
+    await signalBoardChange(supabase, 'waitlist');
 
     return new Response(JSON.stringify({
       ok: true,
