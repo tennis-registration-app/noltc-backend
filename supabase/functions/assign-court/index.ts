@@ -527,6 +527,9 @@ serve(async (req) => {
       startedAt: startedAt.toISOString(),
     })
 
+    // Get registrant member_id (first member in participants list)
+    const registrantMemberId = requestData.participants.find(p => p.type === 'member')?.member_id || null
+
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .insert({
@@ -538,6 +541,7 @@ serve(async (req) => {
         scheduled_end_at: scheduledEndAt.toISOString(),
         created_by_device_id: requestData.device_id,
         participant_key: participantKey,
+        registered_by_member_id: registrantMemberId,
       })
       .select()
       .single()

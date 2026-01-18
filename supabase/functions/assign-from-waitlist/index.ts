@@ -352,6 +352,9 @@ serve(async (req) => {
       ? new Date(Math.min(newEndTime.getTime(), inheritedEndTime.getTime()))
       : newEndTime
 
+    // Get registrant member_id (first member in waitlist)
+    const registrantMemberId = waitlistMembers.find(wm => wm.participant_type === 'member')?.member_id || null
+
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .insert({
@@ -362,6 +365,7 @@ serve(async (req) => {
         scheduled_end_at: scheduledEndAt.toISOString(),
         created_by_device_id: requestData.device_id,
         participant_key: participantKey,
+        registered_by_member_id: registrantMemberId,
       })
       .select()
       .single()
