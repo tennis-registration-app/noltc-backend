@@ -177,55 +177,95 @@ serve(async (req) => {
       throw new Error(`Failed to delete existing participants: ${deleteError.message}`)
     }
 
-    // 2. Resolve participants and insert new ones
-    const participantRecords = []
+    // 2. Resolve participants - two passes: members first, then guests
+    // First pass: resolve all members and collect account_ids
+    const memberRecords: Array<{
+      session_id: string
+      member_id: string
+      participant_type: 'member'
+      guest_name: null
+      account_id: string
+    }> = []
+    const guestNames: string[] = []
+    let firstMemberAccountId: string | null = null
 
     for (const p of participants) {
       const name = (p.name || '').trim()
       if (!name) continue  // Skip empty names
 
       if (p.type === 'member' && p.member_id) {
-        // Member with provided ID
-        participantRecords.push({
-          session_id,
-          member_id: p.member_id,
-          participant_type: 'member',
-          guest_name: null,
-        })
+        // Member with provided ID - need to fetch account_id
+        const { data: member } = await supabase
+          .from('members')
+          .select('id, account_id')
+          .eq('id', p.member_id)
+          .single()
+
+        if (member) {
+          memberRecords.push({
+            session_id,
+            member_id: member.id,
+            participant_type: 'member',
+            guest_name: null,
+            account_id: member.account_id,
+          })
+          if (!firstMemberAccountId) {
+            firstMemberAccountId = member.account_id
+          }
+        }
       } else if (p.type === 'member') {
         // Try to find member by name
         const { data: members } = await supabase
           .from('members')
-          .select('id, display_name')
+          .select('id, display_name, account_id')
           .ilike('display_name', `%${name}%`)
           .limit(1)
 
         if (members && members.length > 0) {
-          participantRecords.push({
+          memberRecords.push({
             session_id,
             member_id: members[0].id,
             participant_type: 'member',
             guest_name: null,
+            account_id: members[0].account_id,
           })
+          if (!firstMemberAccountId) {
+            firstMemberAccountId = members[0].account_id
+          }
         } else {
-          // Member not found, treat as guest with name
-          participantRecords.push({
-            session_id,
-            member_id: null,
-            participant_type: 'guest',
-            guest_name: name,
-          })
+          // Member not found, treat as guest
+          guestNames.push(name)
         }
       } else {
-        // Guest
-        participantRecords.push({
-          session_id,
-          member_id: null,
-          participant_type: 'guest',
-          guest_name: name,
-        })
+        // Explicit guest
+        guestNames.push(name)
       }
     }
+
+    // Validate: need at least one member for guest account assignment
+    if (guestNames.length > 0 && !firstMemberAccountId) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: 'NO_MEMBER_FOR_GUESTS',
+          message: 'Cannot add guests without at least one member (needed for account)',
+          serverNow,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      )
+    }
+
+    // Second pass: create guest records with first member's account_id
+    const guestRecords = guestNames.map(name => ({
+      session_id,
+      member_id: null,
+      participant_type: 'guest' as const,
+      guest_name: name,
+      account_id: firstMemberAccountId!,
+    }))
+
+    // Combine and insert all participants
+    const participantRecords = [...memberRecords, ...guestRecords]
 
     if (participantRecords.length > 0) {
       const { error: insertError } = await supabase
