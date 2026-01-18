@@ -8,6 +8,7 @@ import {
   conflictResponse,
   internalErrorResponse,
 } from '../_shared/index.ts';
+import { signalBoardChange } from "../_shared/sessionLifecycle.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -128,7 +129,7 @@ serve(async (req) => {
     }
 
     // Insert board change signal
-    await supabase.from('board_change_signals').insert({ change_type: 'waitlist' });
+    await signalBoardChange(supabase, 'waitlist');
 
     // Audit log
     await supabase.from('audit_log').insert({
