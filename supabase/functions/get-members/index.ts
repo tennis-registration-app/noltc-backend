@@ -32,6 +32,7 @@ serve(async (req) => {
         account_id,
         plays_180d,
         last_played_at,
+        uncleared_streak,
         accounts(member_number, account_name)
       `)
       .eq('status', 'active')
@@ -84,6 +85,7 @@ serve(async (req) => {
       member_number: m.accounts?.member_number,
       account_name: m.accounts?.account_name,
       plays_180d: m.plays_180d,
+      uncleared_streak: m.uncleared_streak || 0,
     }))
 
     return new Response(JSON.stringify({
