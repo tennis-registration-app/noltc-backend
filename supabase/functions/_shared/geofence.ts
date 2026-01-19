@@ -1,3 +1,8 @@
+// ============================================
+// DEVELOPMENT FLAG - Set to true to skip geofence validation
+// ============================================
+const SKIP_GEOFENCE_CHECK = true // Set to false for production
+
 // Haversine formula to calculate distance between two coordinates
 export function calculateDistance(
   lat1: number,
@@ -31,6 +36,17 @@ export async function validateGeofence(
   userLat: number,
   userLon: number
 ): Promise<GeofenceResult> {
+  // Skip geofence check if disabled for development/testing
+  if (SKIP_GEOFENCE_CHECK) {
+    console.log('⚠️ SKIP_GEOFENCE_CHECK is enabled - bypassing location validation')
+    return {
+      isValid: true,
+      distance: 0,
+      threshold: 0,
+      message: 'Location check skipped (development mode)',
+    }
+  }
+
   // Get club coordinates from settings
   const { data: latSetting } = await supabase
     .from('system_settings')
