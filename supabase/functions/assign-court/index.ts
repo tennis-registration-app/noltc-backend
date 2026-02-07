@@ -169,6 +169,12 @@ serve(async (req) => {
       throw new Error('Court is not active')
     }
 
+    // Singles-only court restriction
+    const SINGLES_ONLY_COURT_NUMBERS = [8]
+    if (SINGLES_ONLY_COURT_NUMBERS.includes(court.court_number) && requestData.session_type !== 'singles') {
+      throw new Error('Court 8 is singles only')
+    }
+
     // ===========================================
     // VERIFY DEVICE EXISTS
     // ===========================================
