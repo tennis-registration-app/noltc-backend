@@ -77,7 +77,7 @@ serve(async (req) => {
 
     // Validate participant count for session type
     const minPlayers = requestData.session_type === 'singles' ? 1 : 2
-    const maxPlayers = requestData.session_type === 'singles' ? 2 : 4
+    const maxPlayers = requestData.session_type === 'singles' ? 3 : 4
     if (requestData.participants.length < minPlayers || requestData.participants.length > maxPlayers) {
       throw new Error(`${requestData.session_type} requires ${minPlayers}-${maxPlayers} participants`)
     }

@@ -125,7 +125,7 @@ serve(async (req) => {
 
     // Validate participant count for group type
     const minPlayers = requestData.group_type === 'singles' ? 1 : 2
-    const maxPlayers = requestData.group_type === 'singles' ? 2 : 4
+    const maxPlayers = requestData.group_type === 'singles' ? 3 : 4
     if (requestData.participants.length < minPlayers || requestData.participants.length > maxPlayers) {
       return denialResponse(
         'INVALID_PARTICIPANT_COUNT',
