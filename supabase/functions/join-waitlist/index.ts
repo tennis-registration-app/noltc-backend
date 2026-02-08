@@ -23,6 +23,7 @@ interface JoinWaitlistRequest {
   initiated_by?: 'user' | 'ai_assistant'
   latitude?: number
   longitude?: number
+  deferred?: boolean
 }
 
 // Denial codes for expected business rule failures (HTTP 200)
@@ -314,6 +315,7 @@ serve(async (req) => {
         status: 'waiting',
         joined_at: now.toISOString(),
         created_by_device_id: requestData.device_id,
+        deferred: requestData.deferred ?? false,
       })
       .select()
       .single()
