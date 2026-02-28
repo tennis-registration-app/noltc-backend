@@ -147,43 +147,35 @@ serve(async (req) => {
     // CREATE TRANSACTION(S)
     // ===========================================
 
-    const transactions = []
+    let transactions: Array<{ id: string; account_id: string; amount_cents: number; description: string }> = []
 
     if (requestData.split_balls && requestData.split_account_ids && requestData.split_account_ids.length > 1) {
-      // Split the cost among multiple accounts
+      // Split the cost among players (one charge per player, not per account).
+      // Same account may appear multiple times (family members).
       const splitAmount = Math.ceil(ballPriceCents / requestData.split_account_ids.length)
+      const description = `Ball purchase (split) - ${session.courts?.name || 'Court'}`
 
-      for (const accountId of requestData.split_account_ids) {
-        const { data: account } = await supabase
-          .from('accounts')
-          .select('account_name')
-          .eq('id', accountId)
-          .single()
+      // Atomic RPC: all inserts succeed or all roll back.
+      // Idempotency key uses array index (not accountId) to avoid collisions
+      // when the same account appears more than once.
+      const { data: rpcResult, error: rpcError } = await supabase.rpc('insert_ball_purchase_split', {
+        p_account_ids: requestData.split_account_ids,
+        p_session_id: requestData.session_id,
+        p_amount_cents: splitAmount,
+        p_description: description,
+        p_device_id: requestData.device_id,
+        p_idempotency_base: requestData.idempotency_key || null,
+      })
 
-        // For split transactions, append account suffix to idempotency key
-        const splitIdempotencyKey = requestData.idempotency_key
-          ? `${requestData.idempotency_key}-${accountId}`
-          : null
-
-        const { data: tx, error: txError } = await supabase
-          .from('transactions')
-          .insert({
-            account_id: accountId,
-            session_id: requestData.session_id,
-            transaction_type: 'ball_purchase',
-            amount_cents: splitAmount,
-            description: `Ball purchase (split) - ${session.courts?.name || 'Court'}`,
-            created_by_device_id: requestData.device_id,
-            idempotency_key: splitIdempotencyKey,
-          })
-          .select()
-          .single()
-
-        if (txError) {
-          throw new Error(`Failed to create transaction: ${txError.message}`)
-        }
-        transactions.push(tx)
+      if (rpcError) {
+        throw new Error(`Split transaction RPC failed: ${rpcError.message}`)
       }
+
+      if (!rpcResult.success) {
+        throw new Error(`Split transaction failed: ${rpcResult.error}`)
+      }
+
+      transactions = rpcResult.transactions
     } else {
       // Single account pays full price
       const { data: tx, error: txError } = await supabase
