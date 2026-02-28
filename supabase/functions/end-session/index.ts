@@ -132,6 +132,9 @@ serve(async (req) => {
       // Signal board change
       await signalBoardChange(supabase, 'session');
 
+      // Fetch updated board state so frontend can apply without a separate refetch
+      const board = await fetchBoardState(supabase);
+
       return addCorsHeaders(
         successResponse(
           {
@@ -139,6 +142,7 @@ serve(async (req) => {
             message: sessionsEnded > 1 ? `Ended ${sessionsEnded} sessions` : 'Session ended',
             cacheOk: cacheFailures.length === 0,
             ...(cacheFailures.length > 0 && { cacheFailures }),
+            board,
           },
           serverNow
         )
@@ -180,6 +184,9 @@ serve(async (req) => {
       .eq('id', targetSessionId)
       .single();
 
+    // Fetch updated board state so frontend can apply without a separate refetch
+    const board = await fetchBoardState(supabase);
+
     return addCorsHeaders(
       successResponse(
         {
@@ -194,6 +201,7 @@ serve(async (req) => {
             : null,
           cacheOk: result.cacheOk !== false,
           ...(result.cacheOk === false && { cacheError: result.cacheError }),
+          board,
         },
         serverNow
       )
@@ -203,6 +211,50 @@ serve(async (req) => {
     return addCorsHeaders(internalErrorResponse(error.message, serverNow));
   }
 });
+
+/**
+ * Fetch current board state for inclusion in mutation response.
+ * Returns null on failure — mutation already succeeded, don't fail the response.
+ */
+async function fetchBoardState(
+  supabase: ReturnType<typeof createClient>
+): Promise<Record<string, unknown> | null> {
+  try {
+    const boardNow = new Date().toISOString();
+    const [courtsResult, waitlistResult, upcomingResult, hoursResult] = await Promise.all([
+      supabase.rpc('get_court_board', { request_time: boardNow }),
+      supabase.rpc('get_active_waitlist', { request_time: boardNow }),
+      supabase.rpc('get_upcoming_blocks', { request_time: boardNow }),
+      supabase.from('operating_hours').select('*').order('day_of_week'),
+    ]);
+
+    if (courtsResult.error) {
+      console.error('Failed to fetch board after end-session:', courtsResult.error);
+      return null;
+    }
+
+    const upcomingBlocks = (upcomingResult.data || []).map((b: any) => ({
+      id: b.block_id,
+      courtId: b.court_id,
+      courtNumber: b.court_number,
+      blockType: b.block_type,
+      title: b.title,
+      startsAt: b.starts_at,
+      endsAt: b.ends_at,
+    }));
+
+    return {
+      serverNow: boardNow,
+      courts: courtsResult.data || [],
+      waitlist: waitlistResult.data || [],
+      operatingHours: hoursResult.data || [],
+      upcomingBlocks,
+    };
+  } catch (boardError) {
+    console.error('Failed to fetch board after end-session:', boardError);
+    return null;
+  }
+}
 
 /**
  * Add CORS headers to a response

@@ -156,12 +156,49 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
+    // Fetch updated board state so frontend can apply without a separate refetch
+    let board: Record<string, unknown> | null = null
+    try {
+      const boardNow = new Date().toISOString()
+      const [courtsResult, waitlistResult, upcomingResult, hoursResult] = await Promise.all([
+        supabase.rpc('get_court_board', { request_time: boardNow }),
+        supabase.rpc('get_active_waitlist', { request_time: boardNow }),
+        supabase.rpc('get_upcoming_blocks', { request_time: boardNow }),
+        supabase.from('operating_hours').select('*').order('day_of_week'),
+      ])
+
+      if (courtsResult.error) {
+        console.error('Failed to fetch board after clear-all-courts:', courtsResult.error)
+      } else {
+        const upcomingBlocks = (upcomingResult.data || []).map((b: any) => ({
+          id: b.block_id,
+          courtId: b.court_id,
+          courtNumber: b.court_number,
+          blockType: b.block_type,
+          title: b.title,
+          startsAt: b.starts_at,
+          endsAt: b.ends_at,
+        }))
+
+        board = {
+          serverNow: boardNow,
+          courts: courtsResult.data || [],
+          waitlist: waitlistResult.data || [],
+          operatingHours: hoursResult.data || [],
+          upcomingBlocks,
+        }
+      }
+    } catch (boardError) {
+      console.error('Failed to fetch board after clear-all-courts:', boardError)
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
         message: `Cleared ${sessionsEnded} active sessions`,
         sessionsEnded,
         serverNow,
+        board,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
