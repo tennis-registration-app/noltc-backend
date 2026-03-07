@@ -82,6 +82,61 @@ async function testEnvelope(endpoint, method, body = null, expectError = false) 
   return { endpoint, passed: errors.length === 0, errors };
 }
 
+/**
+ * Discovery probe — same envelope checks as testEnvelope, but on failure
+ * prints the actual top-level keys so deviations are visible rather than silent.
+ */
+async function discoveryProbe(endpoint, method, body = null) {
+  const errors = [];
+  let actualKeys = [];
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'x-device-id': DEVICE_ID,
+        'x-device-type': 'kiosk',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const data = await response.json();
+    actualKeys = Object.keys(data).sort();
+
+    if (typeof data.ok !== 'boolean') {
+      errors.push(`'ok' should be boolean, got ${typeof data.ok}`);
+    }
+    if (typeof data.serverNow !== 'string') {
+      errors.push(`'serverNow' should be string, got ${typeof data.serverNow}`);
+    } else if (!/^\d{4}-\d{2}-\d{2}T/.test(data.serverNow)) {
+      errors.push(`'serverNow' should be ISO format, got ${data.serverNow}`);
+    }
+    if (data.ok === false) {
+      if (typeof data.code !== 'string') {
+        errors.push(`Error response missing 'code' string`);
+      }
+      if (typeof data.message !== 'string') {
+        errors.push(`Error response missing 'message' string`);
+      }
+    }
+
+    const label = errors.length === 0 ? '✅' : '🔍';
+    console.log(`${label} ${endpoint} (${method}) [discovery]`);
+    if (errors.length > 0) {
+      errors.forEach((e) => console.log(`   - ${e}`));
+      console.log(`   actual keys: [${actualKeys.join(', ')}]`);
+    }
+  } catch (e) {
+    errors.push(`Request failed: ${e}`);
+    console.log(`❌ ${endpoint} (${method}) [discovery]`);
+    console.log(`   - ${e}`);
+  }
+
+  return { endpoint, passed: errors.length === 0, errors, actualKeys };
+}
+
 async function runTests() {
   console.log('\n=== Envelope Contract Tests ===\n');
   console.log(`Testing against: ${SUPABASE_URL}\n`);
@@ -152,6 +207,36 @@ async function runTests() {
   const passed = results.filter((r) => r.passed).length;
   const total = results.length;
   console.log(`${passed}/${total} tests passed`);
+
+  // --- Discovery probes (not counted in pass/fail) ---
+  console.log('\n=== Discovery Probes ===\n');
+  console.log('These check envelope shape of endpoints not yet in the main test suite.\n');
+
+  const discovery = [];
+
+  // join-waitlist with invalid group_type — hits early validation, no mutation
+  discovery.push(
+    await discoveryProbe('join-waitlist', 'POST', {
+      group_type: 'invalid',
+      participants: [],
+      device_id: DEVICE_ID,
+      device_type: 'kiosk',
+    })
+  );
+
+  // assign-from-waitlist with missing required fields — hits early validation, no mutation
+  discovery.push(
+    await discoveryProbe('assign-from-waitlist', 'POST', {
+      device_id: DEVICE_ID,
+      device_type: 'kiosk',
+    })
+  );
+
+  const discoveryMatched = discovery.filter((d) => d.passed).length;
+  console.log(`\n${discoveryMatched}/${discovery.length} discovery probes match shared envelope`);
+  if (discoveryMatched < discovery.length) {
+    console.log('Review deviations above — these are informational, not failures.');
+  }
 
   if (passed < total) {
     process.exit(1);
