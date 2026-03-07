@@ -14,6 +14,19 @@
 SUPABASE_URL="https://dncjloqewjubodkoruou.supabase.co"
 ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4"
 
+# --- Runtime safety guard ---
+echo ""
+echo "WARNING: This script targets PRODUCTION."
+echo "  URL: ${SUPABASE_URL}"
+echo "  It will create real sessions and modify production data."
+echo ""
+read -p "Continue? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+  echo "Aborted."
+  exit 0
+fi
+echo ""
+
 # Test 1: Singles match - John Smith and Bob Johnson
 echo "=== Test 1: Singles Match ==="
 curl -X POST "${SUPABASE_URL}/functions/v1/assign-court" \
