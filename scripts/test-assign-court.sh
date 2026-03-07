@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# =============================================================================
+# WARNING: This script hits PRODUCTION.
+#
+# The SUPABASE_URL and ANON_KEY below point to the live production Supabase
+# instance. Running this script will create real sessions and modify production
+# data. Only run this intentionally for post-deploy validation.
+# =============================================================================
+
 # NOLTC Backend - Test assign-court Edge Function
 # Replace ANON_KEY with your actual anon key
 

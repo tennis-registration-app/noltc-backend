@@ -1,10 +1,19 @@
 /**
  * Minimal envelope contract tests for Edge Functions
  *
+ * WARNING: Defaults to the PRODUCTION Supabase URL if SUPABASE_URL is not set.
+ * Only run this intentionally for post-deploy validation.
+ *
  * Verifies:
  * - ok exists and is boolean
  * - serverNow exists and is ISO string
  * - errors include code and message
+ *
+ * Required env vars:
+ *   SUPABASE_ANON_KEY  — the anon key for the target Supabase project
+ *
+ * Optional env vars:
+ *   SUPABASE_URL       — override the target URL (defaults to production)
  *
  * Run: SUPABASE_ANON_KEY=... npx ts-node scripts/test-envelope-contracts.ts
  * Or with custom URL: SUPABASE_ANON_KEY=... SUPABASE_URL=... npx ts-node scripts/test-envelope-contracts.ts

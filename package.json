@@ -4,6 +4,9 @@
   "description": "Supabase backend for the New Orleans Lawn Tennis Club Court Registration System.",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "directories": {
     "doc": "docs"
   },
