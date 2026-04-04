@@ -2,7 +2,7 @@
 /**
  * Minimal envelope contract tests for Edge Functions
  *
- * WARNING: Defaults to the PRODUCTION Supabase URL if SUPABASE_URL is not set.
+ * WARNING: This script hits whichever URL is configured in SUPABASE_URL.
  * Only run this intentionally for post-deploy validation.
  *
  * Verifies:
@@ -10,23 +10,66 @@
  * - serverNow exists and is ISO string
  * - errors include code and message
  *
- * Required env vars:
- *   SUPABASE_ANON_KEY  — the anon key for the target Supabase project
+ * Usage (option 1 — env vars inline):
+ *   SUPABASE_URL=https://your-ref.supabase.co \
+ *   SUPABASE_ANON_KEY=eyJ... \
+ *   node scripts/test-envelope-contracts.js
  *
- * Optional env vars:
- *   SUPABASE_URL       — override the target URL (defaults to production)
- *
- * Run: SUPABASE_ANON_KEY=... node scripts/test-envelope-contracts.js
- * Or with custom URL: SUPABASE_ANON_KEY=... SUPABASE_URL=... node scripts/test-envelope-contracts.js
+ * Usage (option 2 — create .env from .env.example):
+ *   cp .env.example .env
+ *   # Fill in your values, then:
+ *   node scripts/test-envelope-contracts.js
  */
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://dncjloqewjubodkoruou.supabase.co';
+import { readFileSync } from 'fs';
+
+// Load .env.local or .env if present (env vars already in the environment take precedence)
+for (const dotenvFile of ['.env.local', '.env']) {
+  try {
+    const content = readFileSync(dotenvFile, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+      if (!(key in process.env)) {
+        process.env[key] = value;
+      }
+    }
+    break; // Only load the first file found
+  } catch {
+    // File not found — continue to next candidate
+  }
+}
+
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const DEVICE_ID = 'a0000000-0000-0000-0000-000000000001';
 
+if (!SUPABASE_URL) {
+  console.error('Error: SUPABASE_URL is not set.');
+  console.error('  Get this from: Supabase Dashboard → Project Settings → API');
+  console.error('  This is the project URL (e.g. https://your-project-ref.supabase.co)');
+  console.error('');
+  console.error('  Run with env vars inline:');
+  console.error('    SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... node scripts/test-envelope-contracts.js');
+  console.error('');
+  console.error('  Or create a .env file from the example to avoid passing vars every time:');
+  console.error('    cp .env.example .env  # fill in your values');
+  process.exit(1);
+}
+
 if (!SUPABASE_ANON_KEY) {
-  console.error('Error: SUPABASE_ANON_KEY environment variable is required');
-  console.error('Usage: SUPABASE_ANON_KEY=your-key node scripts/test-envelope-contracts.js');
+  console.error('Error: SUPABASE_ANON_KEY is not set.');
+  console.error('  Get this from: Supabase Dashboard → Project Settings → API Keys (the JWT-format key starting with eyJ...)');
+  console.error('');
+  console.error('  Run with env vars inline:');
+  console.error('    SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... node scripts/test-envelope-contracts.js');
+  console.error('');
+  console.error('  Or create a .env file from the example to avoid passing vars every time:');
+  console.error('    cp .env.example .env  # fill in your values');
   process.exit(1);
 }
 

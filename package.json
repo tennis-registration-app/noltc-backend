@@ -21,6 +21,7 @@
     "lint": "eslint supabase/functions/_shared/ tests/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "verify": "npm run lint && npm run typecheck && npm run test"
   },
   "repository": {
@@ -35,9 +36,10 @@
   },
   "homepage": "https://github.com/tennis-registration-app/noltc-backend#readme",
   "devDependencies": {
+    "@supabase/supabase-js": "^2.101.1",
     "@types/node": "^25.0.3",
     "eslint": "^9.0.0",
-    "supabase": "^2.67.2",
+    "supabase": "^2.84.10",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.0.0",

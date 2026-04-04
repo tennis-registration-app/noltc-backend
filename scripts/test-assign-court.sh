@@ -1,18 +1,62 @@
 #!/bin/bash
 
 # =============================================================================
+# USAGE
+#
+# Option 1 — env vars inline:
+#   SUPABASE_URL=https://your-ref.supabase.co \
+#   SUPABASE_ANON_KEY=eyJ... \
+#   bash scripts/test-assign-court.sh
+#
+# Option 2 — create .env from .env.example:
+#   cp .env.example .env
+#   # Fill in your values, then:
+#   bash scripts/test-assign-court.sh
+#
+# =============================================================================
 # WARNING: This script hits PRODUCTION.
 #
-# The SUPABASE_URL and ANON_KEY below point to the live production Supabase
-# instance. Running this script will create real sessions and modify production
-# data. Only run this intentionally for post-deploy validation.
+# Running this script will create real sessions and modify production data.
+# Only run this intentionally for post-deploy validation.
 # =============================================================================
 
 # NOLTC Backend - Test assign-court Edge Function
-# Replace ANON_KEY with your actual anon key
 
-SUPABASE_URL="https://dncjloqewjubodkoruou.supabase.co"
-ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4"
+# Load .env.local or .env if present (env vars already in the environment take precedence)
+for dotenv_file in ".env.local" ".env"; do
+  if [ -f "$dotenv_file" ]; then
+    export $(grep -v '^#' "$dotenv_file" | grep -v '^$' | xargs) 2>/dev/null || true
+    break
+  fi
+done
+
+# Validate required env vars
+if [ -z "$SUPABASE_URL" ]; then
+  echo "Error: SUPABASE_URL is not set."
+  echo "  Get this from: Supabase Dashboard → Project Settings → API"
+  echo "  This is the project URL (e.g. https://your-project-ref.supabase.co)"
+  echo ""
+  echo "  Run with env vars inline:"
+  echo "    SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... bash scripts/test-assign-court.sh"
+  echo ""
+  echo "  Or create a .env file from the example to avoid passing vars every time:"
+  echo "    cp .env.example .env  # fill in your values"
+  exit 1
+fi
+
+if [ -z "$SUPABASE_ANON_KEY" ]; then
+  echo "Error: SUPABASE_ANON_KEY is not set."
+  echo "  Get this from: Supabase Dashboard → Project Settings → API Keys (the JWT-format key starting with eyJ...)"
+  echo ""
+  echo "  Run with env vars inline:"
+  echo "    SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... bash scripts/test-assign-court.sh"
+  echo ""
+  echo "  Or create a .env file from the example to avoid passing vars every time:"
+  echo "    cp .env.example .env  # fill in your values"
+  exit 1
+fi
+
+ANON_KEY="$SUPABASE_ANON_KEY"
 
 # --- Runtime safety guard ---
 echo ""
