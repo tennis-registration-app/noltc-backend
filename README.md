@@ -117,9 +117,23 @@ cp .env.example .env   # fill in values
 npm run test:integration
 ```
 
+### GitHub Actions (nightly)
+
+A scheduled workflow runs the integration tests automatically every day at **7:00 AM Central** (1:00 PM UTC) — within club operating hours so all time-dependent tests pass. It can also be triggered manually from the **Actions tab** for post-deploy confidence checks.
+
+Workflow file: `.github/workflows/integration-tests.yml`
+
+Requires three repository secrets to be configured at **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `SUPABASE_URL` | Project URL (e.g. `https://your-ref.supabase.co`) |
+| `SUPABASE_ANON_KEY` | JWT-format anon key (starts with `eyJ...`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | JWT-format service role key (starts with `eyJ...`) |
+
 ### Important notes
 
-- Integration tests are **not** part of `npm run verify` and are **not** run by CI. They require live credentials and network access.
+- Integration tests are **not** part of `npm run verify` and are **not** part of the PR gate (`verify.yml`). They run separately via the nightly workflow or manually.
 - Tests use deterministic UUIDs in the `d0000000-*` range for all test fixtures to avoid collisions with real data.
 - `fileParallelism: false` is set in `vitest.integration.config.ts` — tests run sequentially to prevent cross-test database state contamination.
 - Two test cases (assign-court happy paths) depend on the club being within operating hours (America/Chicago). They will return a time-related error if run outside business hours — this is expected behavior, not a test defect.

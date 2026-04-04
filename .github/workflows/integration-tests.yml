@@ -1,0 +1,59 @@
+# Integration Tests (Nightly)
+#
+# Runs the 21 integration tests against the live production Supabase instance.
+#
+# REQUIRED REPOSITORY SECRETS (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL             — project URL (e.g. https://your-ref.supabase.co)
+#   SUPABASE_ANON_KEY        — JWT-format anon key (starts with eyJ...)
+#   SUPABASE_SERVICE_ROLE_KEY — JWT-format service role key (starts with eyJ...)
+#
+# SCHEDULE: 1:00 PM UTC = 7:00 AM Central (America/Chicago)
+#   Scheduled within club operating hours so time-dependent tests in
+#   assign-court and join-waitlist pass (they return "Registration opens at..."
+#   outside of business hours).
+#
+# MANUAL TRIGGER: Can also be run on demand from the GitHub Actions tab via
+#   workflow_dispatch — useful for post-deploy confidence checks.
+#
+# THESE TESTS ARE NOT PART OF THE PR GATE. The existing verify.yml workflow
+#   covers lint, typecheck, and unit tests on every push and PR. Integration
+#   tests run separately here as a nightly recurring confidence check.
+#
+# IF TESTS FAIL, check:
+#   1. Operating hours — did the cron fire outside club hours? Trigger manually.
+#   2. Supabase instance status — check https://status.supabase.com
+#   3. Edge Function deployment — confirm all functions are deployed and healthy
+#      in the Supabase Dashboard → Edge Functions.
+#   4. Secrets — confirm all 3 secrets are configured and not expired/rotated.
+
+name: Integration Tests (Nightly)
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # 1:00 PM UTC = 7:00 AM Central (within operating hours)
+  workflow_dispatch:       # Manual trigger from the Actions tab
+
+jobs:
+  integration-tests:
+    name: Run integration tests against live Supabase instance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
