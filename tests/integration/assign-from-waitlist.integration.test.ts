@@ -24,8 +24,7 @@ const PRE_INSERTED_SESSION_ID = 'd0000000-0000-0000-0000-000000004001';
 
 // NOTE: This function does NOT use the shared response helpers.
 // All responses — success and error — return HTTP 200.
-// Error shape (production): { ok: false, error: string, serverNow: string }
-//   (local source has code/message split but it is not yet deployed)
+// Error shape: { ok: false, code: 'INTERNAL_ERROR', message: string, serverNow: string }
 // Success shape: { ok: true, serverNow, session: {...}, waitlist: {...}, positions_updated, board }
 
 describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)', () => {
@@ -242,7 +241,8 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.error).toContain('Waitlist entry not found');
+    expect(body.code).toBe('INTERNAL_ERROR');
+    expect(body.message).toContain('Waitlist entry not found');
     expect(typeof body.serverNow).toBe('string');
   });
 
@@ -291,7 +291,8 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.error).toContain('occupied');
+    expect(body.code).toBe('INTERNAL_ERROR');
+    expect(body.message).toContain('occupied');
     expect(typeof body.serverNow).toBe('string');
   });
 
@@ -301,7 +302,8 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.error).toContain('waitlist_id is required');
+    expect(body.code).toBe('INTERNAL_ERROR');
+    expect(body.message).toContain('waitlist_id is required');
     expect(typeof body.serverNow).toBe('string');
   });
 });

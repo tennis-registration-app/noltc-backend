@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
 import { generateParticipantKey } from "../_shared/participantKey.ts"
-import { signalBoardChange } from "../_shared/sessionLifecycle.ts"
+import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -254,36 +254,19 @@ serve(async (req) => {
         // End the overtime session
         console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
 
-        // Update the session's actual_end_at (required for unique constraint)
-        const { error: endSessionError } = await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: serverNow,
-            end_reason: 'overtime_takeover'
-          })
-          .eq('id', activeSession.id)
-          .is('actual_end_at', null) // Only if not already ended
+        const endResult = await endSession(supabase, {
+          sessionId: activeSession.id,
+          serverNow,
+          endReason: 'overtime_takeover',
+          deviceId: requestData.device_id,
+          eventData: {
+            trigger: 'overtime_takeover',
+            takeover_waitlist_id: requestData.waitlist_id,
+          },
+        })
 
-        if (endSessionError) {
-          console.error('Failed to end overtime session:', endSessionError)
-          throw new Error(`Failed to end overtime session: ${endSessionError.message}`)
-        }
-
-        // Also insert END event for audit trail (ignore errors if already exists)
-        const { error: eventError } = await supabase
-          .from('session_events')
-          .insert({
-            session_id: activeSession.id,
-            event_type: 'END',
-            event_data: {
-              reason: 'overtime_takeover',
-              ended_by: requestData.device_id,
-              ended_at: serverNow
-            },
-            created_by: requestData.device_id
-          })
-        if (eventError) {
-          console.warn('Event insert warning (may already exist):', eventError.message)
+        if (!endResult.success && !endResult.alreadyEnded) {
+          console.error(`Failed to end displaced session ${activeSession.id}:`, endResult.error)
         }
 
         console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
