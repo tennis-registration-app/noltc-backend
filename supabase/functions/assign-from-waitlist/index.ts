@@ -1,13 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { validateGeofence, validateLocationToken } from "../_shared/geofence.ts"
+import { enforceGeofence } from "../_shared/geofenceCheck.ts"
+import { lookupDuration, processGuestFees, processBallPurchase } from "../_shared/courtAssignment.ts"
 import { generateParticipantKey } from "../_shared/participantKey.ts"
 import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { verifyDevice } from "../_shared/deviceLookup.ts"
+import { fetchBoardState } from "../_shared/boardFetch.ts"
+import { corsHeaders } from "../_shared/cors.ts"
 
 interface AssignFromWaitlistRequest {
   waitlist_id: string
@@ -59,112 +58,25 @@ serve(async (req) => {
     // VERIFY DEVICE EXISTS
     // ===========================================
 
-    const { data: device, error: deviceError } = await supabase
-      .from('devices')
-      .select('*')
-      .eq('id', requestData.device_id)
-      .single()
-
-    if (deviceError || !device) {
-      throw new Error('Device not registered')
-    }
-
-    await supabase
-      .from('devices')
-      .update({ last_seen_at: new Date().toISOString() })
-      .eq('id', requestData.device_id)
+    const device = await verifyDevice(supabase, requestData.device_id, serverNow)
 
     // ===========================================
     // GEOFENCE VALIDATION (mobile only)
     // ===========================================
 
-    let geofenceStatus: 'validated' | 'failed' | 'not_required' = 'not_required'
-    let geoVerifiedMethod: 'gps' | 'qr' | null = null
-
-    if (device.device_type === 'mobile') {
-      const hasGps = requestData.latitude && requestData.longitude
-      const hasToken = requestData.location_token
-
-      if (hasGps) {
-        // GPS-based validation
-        const geofenceResult = await validateGeofence(
-          supabase,
-          requestData.latitude!,
-          requestData.longitude!
-        )
-
-        geofenceStatus = geofenceResult.isValid ? 'validated' : 'failed'
-
-        if (geofenceResult.isValid) {
-          geoVerifiedMethod = 'gps'
-        } else {
-          // Log the failed GPS attempt
-          await supabase.from('audit_log').insert({
-            action: 'waitlist_assign',
-            entity_type: 'session',
-            entity_id: '00000000-0000-0000-0000-000000000000',
-            device_id: requestData.device_id,
-            device_type: requestData.device_type,
-            initiated_by: requestData.initiated_by || 'user',
-            request_data: {
-              waitlist_id: requestData.waitlist_id,
-              latitude: requestData.latitude,
-              longitude: requestData.longitude,
-              accuracy: requestData.accuracy,
-              distance: geofenceResult.distance,
-              threshold: geofenceResult.threshold,
-              geo_verified_method: 'gps',
-            },
-            outcome: 'denied',
-            error_message: geofenceResult.message,
-            geofence_status: 'failed',
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-          })
-
-          throw new Error(geofenceResult.message)
-        }
-      } else if (hasToken) {
-        // QR token-based validation (member ID will be resolved from waitlist_members later)
-        // For now, use a placeholder - token validation just needs device_id
-        const tokenResult = await validateLocationToken(
-          supabase,
-          requestData.location_token!,
-          '00000000-0000-0000-0000-000000000000', // Member ID resolved after waitlist lookup
-          requestData.device_id
-        )
-
-        geofenceStatus = tokenResult.isValid ? 'validated' : 'failed'
-
-        if (tokenResult.isValid) {
-          geoVerifiedMethod = 'qr'
-        } else {
-          // Log the failed token attempt
-          await supabase.from('audit_log').insert({
-            action: 'waitlist_assign',
-            entity_type: 'session',
-            entity_id: '00000000-0000-0000-0000-000000000000',
-            device_id: requestData.device_id,
-            device_type: requestData.device_type,
-            initiated_by: requestData.initiated_by || 'user',
-            request_data: {
-              waitlist_id: requestData.waitlist_id,
-              location_token: requestData.location_token,
-              token_id: tokenResult.tokenId,
-              geo_verified_method: 'qr',
-            },
-            outcome: 'denied',
-            error_message: tokenResult.message,
-            geofence_status: 'failed',
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-          })
-
-          throw new Error(tokenResult.message)
-        }
-      } else {
-        // Neither GPS nor token provided
-        throw new Error('Location required for mobile registration')
-      }
-    }
+    const { geofenceStatus, geoVerifiedMethod } = await enforceGeofence(supabase, {
+      deviceType: device.device_type,
+      deviceId: requestData.device_id,
+      initiatedBy: requestData.initiated_by,
+      latitude: requestData.latitude,
+      longitude: requestData.longitude,
+      accuracy: requestData.accuracy,
+      locationToken: requestData.location_token,
+      serverNow,
+      auditAction: 'waitlist_assign',
+      auditRequestData: { waitlist_id: requestData.waitlist_id },
+      ipAddress: req.headers.get('x-forwarded-for') || 'unknown',
+    })
 
     // ===========================================
     // FIND THE WAITLIST ENTRY
@@ -251,9 +163,6 @@ serve(async (req) => {
       const isOvertime = scheduledEnd < now
 
       if (isOvertime) {
-        // End the overtime session
-        console.log(`Ending overtime session ${activeSession.id} for waitlist takeover`)
-
         const endResult = await endSession(supabase, {
           sessionId: activeSession.id,
           serverNow,
@@ -268,8 +177,6 @@ serve(async (req) => {
         if (!endResult.success && !endResult.alreadyEnded) {
           console.error(`Failed to end displaced session ${activeSession.id}:`, endResult.error)
         }
-
-        console.log(`✅ Successfully ended overtime session ${activeSession.id}`)
       } else {
         throw new Error('Court is currently occupied')
       }
@@ -293,19 +200,7 @@ serve(async (req) => {
     // GET DURATION FROM SETTINGS
     // ===========================================
 
-    const durationKey = waitlistEntry.group_type === 'singles'
-      ? 'singles_duration_minutes'
-      : 'doubles_duration_minutes'
-
-    const { data: durationSetting } = await supabase
-      .from('system_settings')
-      .select('value')
-      .eq('key', durationKey)
-      .single()
-
-    const durationMinutes = durationSetting
-      ? parseInt(durationSetting.value)
-      : (waitlistEntry.group_type === 'singles' ? 60 : 90)
+    const durationMinutes = await lookupDuration(supabase, waitlistEntry.group_type)
 
     // ===========================================
     // CHECK FOR RE-REGISTRATION (same group cleared early)
@@ -326,8 +221,6 @@ serve(async (req) => {
 
       if (previousSession) {
         inheritedEndTime = new Date(previousSession.scheduled_end_at);
-        console.log('[assign-from-waitlist] Re-registration detected, participant_key:', participantKey);
-        console.log('[assign-from-waitlist] Inheriting end time from session:', previousSession.id, inheritedEndTime.toISOString());
       }
     }
 
@@ -389,77 +282,27 @@ serve(async (req) => {
     // PROCESS GUEST FEES
     // ===========================================
 
-    const guests = waitlistMembers.filter(wm => wm.participant_type === 'guest')
-    const dayOfWeek = now.getDay()
-
-    if (guests.length > 0) {
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-      const feeKey = isWeekend ? 'guest_fee_weekend_cents' : 'guest_fee_weekday_cents'
-
-      const { data: feeSetting } = await supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', feeKey)
-        .single()
-
-      const guestFeeCents = feeSetting ? parseInt(feeSetting.value) : (isWeekend ? 2000 : 1500)
-
-      for (const guest of guests) {
-        await supabase
-          .from('transactions')
-          .insert({
-            account_id: guest.account_id,
-            transaction_type: 'guest_fee',
-            amount_cents: guestFeeCents,
-            description: `Guest fee for ${guest.guest_name}`,
-            session_id: session.id,
-            created_by_device_id: requestData.device_id,
-          })
-      }
-    }
+    await processGuestFees(
+      supabase,
+      waitlistMembers
+        .filter(wm => wm.participant_type === 'guest')
+        .map(wm => ({ guest_name: wm.guest_name!, account_id: wm.account_id })),
+      session.id,
+      requestData.device_id,
+      now.getDay()
+    )
 
     // ===========================================
     // PROCESS BALL PURCHASE
     // ===========================================
 
-    if (requestData.add_balls) {
-      const { data: ballSetting } = await supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', 'ball_price_cents')
-        .single()
-
-      const ballPriceCents = ballSetting ? parseInt(ballSetting.value) : 500
-      const memberParticipants = waitlistMembers.filter(wm => wm.participant_type === 'member')
-
-      if (requestData.split_balls && memberParticipants.length > 1) {
-        const splitAmount = Math.ceil(ballPriceCents / memberParticipants.length)
-
-        for (const member of memberParticipants) {
-          await supabase
-            .from('transactions')
-            .insert({
-              account_id: member.account_id,
-              transaction_type: 'ball_purchase',
-              amount_cents: splitAmount,
-              description: `Tennis balls (split ${memberParticipants.length} ways)`,
-              session_id: session.id,
-              created_by_device_id: requestData.device_id,
-            })
-        }
-      } else {
-        await supabase
-          .from('transactions')
-          .insert({
-            account_id: waitlistMembers[0].account_id,
-            transaction_type: 'ball_purchase',
-            amount_cents: ballPriceCents,
-            description: 'Tennis balls',
-            session_id: session.id,
-            created_by_device_id: requestData.device_id,
-          })
-      }
-    }
+    await processBallPurchase(supabase, {
+      addBalls: requestData.add_balls || false,
+      splitBalls: requestData.split_balls,
+      participants: waitlistMembers.map(wm => ({ account_id: wm.account_id, isMember: wm.participant_type === 'member' })),
+      sessionId: session.id,
+      deviceId: requestData.device_id,
+    })
 
     // ===========================================
     // UPDATE WAITLIST ENTRY
@@ -551,40 +394,7 @@ serve(async (req) => {
     await signalBoardChange(supabase, 'session');
 
     // Fetch updated board state so frontend can apply without a separate refetch
-    let board: Record<string, unknown> | null = null;
-    try {
-      const boardNow = new Date().toISOString();
-      const [courtsResult, waitlistResult, upcomingResult, hoursResult] = await Promise.all([
-        supabase.rpc('get_court_board', { request_time: boardNow }),
-        supabase.rpc('get_active_waitlist', { request_time: boardNow }),
-        supabase.rpc('get_upcoming_blocks', { request_time: boardNow }),
-        supabase.from('operating_hours').select('*').order('day_of_week'),
-      ]);
-
-      if (courtsResult.error) {
-        console.error('Failed to fetch board after assign-from-waitlist:', courtsResult.error);
-      } else {
-        const upcomingBlocks = (upcomingResult.data || []).map((b: any) => ({
-          id: b.block_id,
-          courtId: b.court_id,
-          courtNumber: b.court_number,
-          blockType: b.block_type,
-          title: b.title,
-          startsAt: b.starts_at,
-          endsAt: b.ends_at,
-        }));
-
-        board = {
-          serverNow: boardNow,
-          courts: courtsResult.data || [],
-          waitlist: waitlistResult.data || [],
-          operatingHours: hoursResult.data || [],
-          upcomingBlocks,
-        };
-      }
-    } catch (boardError) {
-      console.error('Failed to fetch board after assign-from-waitlist:', boardError);
-    }
+    const board = await fetchBoardState(supabase, 'assign-from-waitlist');
 
     return new Response(JSON.stringify({
       ok: true,
