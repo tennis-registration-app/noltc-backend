@@ -185,24 +185,17 @@ supabase db push
 
 **Permanent fix:** A contractor can resolve this by splitting `00000000000000_baseline.sql` into separate DDL files (table definitions first, then functions), so no single migration file mixes statement types.
 
-### `assign-from-waitlist` overtime takeover does not use the shared `endSession()` helper
+### `join-waitlist` uses a non-standard response envelope
 
-When `assign-from-waitlist` displaces an overtime session during a waitlist assignment, it manually updates the `sessions` row (`actual_end_at`, `end_reason`) and inserts a `session_events` row directly, instead of calling the shared `endSession()` helper used by `assign-court` and `end-session`. This means overtime takeover via `assign-from-waitlist` bypasses the uncleared-session streak update in `end_session_atomic`.
-
-**Impact:** Member uncleared streaks may not increment correctly when a session is displaced by a waitlist assignment. The streak logic works correctly for all other session-end paths.
-
-**Fix:** Replace the manual update block in `assign-from-waitlist/index.ts` with a call to `endSession()` from `_shared/sessionLifecycle.ts`.
-
-### `assign-from-waitlist` and `join-waitlist` use non-standard response envelopes
-
-These two functions do not use the shared helpers from `_shared/response.ts`:
-
-- `assign-from-waitlist` returns `{ ok: false, error: string, serverNow }` for all errors (HTTP 200), rather than `{ ok: false, code, message, serverNow }` (HTTP 4xx/5xx). The `code` field is absent in the current production deploy.
-- `join-waitlist` returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper rather than `errorResponse()` / `internalErrorResponse()`.
-
-Both deviations are documented in the integration test comments. The integration tests assert against the actual production wire format, not the shape implied by the shared helpers.
+`join-waitlist` does not use the shared helpers from `_shared/response.ts`. It returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper rather than `errorResponse()` / `internalErrorResponse()`. This deviation is documented in the integration test comments. The integration tests assert against the actual production wire format, not the shape implied by the shared helpers.
 
 ## Recent fixes
+
+### 2026-04-04 — `assign-from-waitlist` overtime takeover now uses shared `endSession()` helper
+
+**Problem:** When `assign-from-waitlist` displaced an overtime session, it manually updated `sessions.actual_end_at` and inserted a `session_events` row directly, bypassing the `end_session_atomic` RPC. This skipped the `uncleared_streak` increment on the displaced session's registrant.
+
+**Fix:** Replaced the manual two-step update with a single `endSession()` call (from `_shared/sessionLifecycle.ts`), which routes through `end_session_atomic`. The operation is now atomic and consistent with `assign-court`'s overtime takeover path. Deployed 2026-04-04.
 
 ### 2026-04-03 — `end_session_atomic` double-end now returns 409 instead of 500
 
