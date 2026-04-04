@@ -83,9 +83,9 @@ function getToolsForMode(allTools: Array<{ name: string }>, mode: string): Array
   return allTools; // draft and execute get all tools
 }
 
-// JWT secret for signing action tokens (use service role key or dedicated secret)
+// JWT secret for signing action tokens (dedicated secret required — never falls back to service role key)
 const getJwtSecret = async (): Promise<CryptoKey> => {
-  const secret = Deno.env.get('AI_ACTIONS_SECRET') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const secret = Deno.env.get('AI_ACTIONS_SECRET') || '';
   const encoder = new TextEncoder();
   return await crypto.subtle.importKey(
     'raw',
