@@ -48,7 +48,7 @@ npm run test
 
 ### Current scope
 
-The verification gate covers the **shared pure-function modules** and their mock-based tests. It does **not** cover the 46 individual Edge Function `index.ts` entrypoints or integration tests against a running Supabase instance.
+The verification gate covers the **shared pure-function modules** and their mock-based tests. It does **not** cover the 46 individual Edge Function `index.ts` entrypoints.
 
 Covered modules:
 
@@ -59,10 +59,9 @@ Covered modules:
 - `_shared/sessionLifecycle.ts` — `normalizeEndReason`, `endSession`, `findActiveSessionOnCourt`, `findAllActiveSessionsOnCourt`
 - `_shared/geofence.ts` — `calculateDistance`, `validateLocationToken`
 
-### What is NOT covered yet
+### What is NOT covered by `npm run verify`
 
 - Individual Edge Function `index.ts` entrypoints (46 functions)
-- Integration tests against a running Supabase instance
 - Coverage reporting
 - `validateGeofence` in `_shared/geofence.ts` (blocked by module-level `SKIP_GEOFENCE_CHECK` constant)
 
@@ -78,6 +77,53 @@ When adding tests for new modules:
 2. Functions that accept a `supabase` client parameter can be tested by passing a mock object — no extraction needed.
 3. Full Edge Function `index.ts` files require either refactoring to extract testable logic or integration tests against `supabase functions serve`.
 
+## Integration tests
+
+Integration tests run HTTP calls against the **live deployed Edge Functions** and verify end-to-end behavior including database state.
+
+```bash
+npm run test:integration
+```
+
+### Coverage
+
+21 tests across 4 critical Edge Function entrypoints:
+
+| Test file | Tests | Notes |
+|---|---|---|
+| `end-session` | 5 | Ends by session_id and court number; error cases for missing/invalid fields; 409 on double-end |
+| `join-waitlist` | 5 | Singles and doubles happy paths; validation error cases |
+| `assign-court` | 6 | Singles and doubles happy paths with DB verification; occupied court, blocked court, missing fields |
+| `assign-from-waitlist` | 5 | Singles and doubles happy paths with DB verification; occupied court, missing waitlist entry, missing fields |
+
+### Requirements
+
+Integration tests require three environment variables:
+
+| Variable | Where to find it |
+|---|---|
+| `SUPABASE_URL` | Supabase Dashboard → Project Settings → API |
+| `SUPABASE_ANON_KEY` | Supabase Dashboard → Project Settings → API Keys (JWT format, starts with `eyJ...`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Dashboard → Project Settings → API Keys (JWT format, starts with `eyJ...`) |
+
+Pass them inline or create a `.env` file from `.env.example`:
+
+```bash
+# Option 1 — inline
+SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... SUPABASE_SERVICE_ROLE_KEY=eyJ... npm run test:integration
+
+# Option 2 — .env file
+cp .env.example .env   # fill in values
+npm run test:integration
+```
+
+### Important notes
+
+- Integration tests are **not** part of `npm run verify` and are **not** run by CI. They require live credentials and network access.
+- Tests use deterministic UUIDs in the `d0000000-*` range for all test fixtures to avoid collisions with real data.
+- `fileParallelism: false` is set in `vitest.integration.config.ts` — tests run sequentially to prevent cross-test database state contamination.
+- Two test cases (assign-court happy paths) depend on the club being within operating hours (America/Chicago). They will return a time-related error if run outside business hours — this is expected behavior, not a test defect.
+
 ## Deployment
 
 ### Recommended deploy sequence
@@ -89,12 +135,28 @@ When adding tests for new modules:
 
 ### Post-deploy validation
 
-The `scripts/` directory contains manual test scripts that can be used to verify deployed functions. These scripts hit a live Supabase instance and should be run intentionally.
+The `scripts/` directory contains manual test scripts that verify deployed functions against a live Supabase instance. All scripts read credentials from environment variables or a `.env` file — no credentials are hardcoded.
 
-- `scripts/test-envelope-contracts.js` — Verifies that Edge Function responses conform to the `{ ok, serverNow, code, message }` envelope contract. Requires `SUPABASE_ANON_KEY` env var. Can target a specific URL via `SUPABASE_URL` env var.
-- `scripts/test-assign-court.sh` — Sends sample assign-court requests. Contains hardcoded production URL and anon key.
+If a required variable is missing, each script prints a clear error message naming the missing variable and directing you to **Supabase Dashboard → Project Settings → API Keys**.
 
-See the warning comments at the top of each script for usage details.
+> **Note:** Edge Functions require JWT-format keys (starting with `eyJ...`). The newer `sb_publishable_` / `sb_secret_` key format does not work as Bearer tokens and will result in 401 errors.
+
+| Script | Purpose |
+|---|---|
+| `test-assign-court.sh` | Sends sample assign-court requests; includes a `Continue? [y/N]` confirmation guard before touching production data |
+| `test-envelope-contracts.js` | Verifies that Edge Function responses conform to the `{ ok, serverNow, code, message }` envelope contract |
+| `test-envelope-contracts.ts` | TypeScript version of the envelope contract tests |
+
+Run any script with credentials inline or via a `.env` file:
+
+```bash
+# Inline
+SUPABASE_URL=https://... SUPABASE_ANON_KEY=eyJ... bash scripts/test-assign-court.sh
+
+# Or via .env file
+cp .env.example .env   # fill in values
+node scripts/test-envelope-contracts.js
+```
 
 ### Rollback
 
@@ -113,17 +175,42 @@ supabase migration new <descriptive-name>
 supabase db push
 ```
 
-## Manual test scripts
+## Known issues
 
-The `scripts/` directory contains manual test scripts. These are **not** part of the automated verification gate.
+### `supabase db push` fails on `move_court_atomic` (CLI parser bug)
 
-**Important:** Some scripts default to the production Supabase URL. Always review the target URL before running. See the warning comments at the top of each script.
+`supabase start` and `supabase db push` fail with `SQLSTATE 42601` ("cannot insert multiple commands into a prepared statement") due to `move_court_atomic` and other PL/pgSQL functions in the baseline migration. This is a known upstream bug in the Supabase CLI's prepared-statement parser and affects all tested CLI versions including 2.84.10.
 
-| Script | Target | Auth required | Purpose |
-|---|---|---|---|
-| `test-assign-court.sh` | Production (hardcoded) | Hardcoded anon key | Sends sample assign-court requests |
-| `test-envelope-contracts.js` | Production default, configurable via `SUPABASE_URL` | `SUPABASE_ANON_KEY` env var | Verifies response envelope shape |
-| `test-envelope-contracts.ts` | Production default, configurable via `SUPABASE_URL` | `SUPABASE_ANON_KEY` env var | TypeScript version of envelope tests |
+**Impact:** Does not affect production. All functions are deployed and working. The workaround for applying new migrations that contain PL/pgSQL functions is to paste the SQL directly into the **Supabase Dashboard SQL Editor**.
+
+**Permanent fix:** A contractor can resolve this by splitting `00000000000000_baseline.sql` into separate DDL files (table definitions first, then functions), so no single migration file mixes statement types.
+
+### `assign-from-waitlist` overtime takeover does not use the shared `endSession()` helper
+
+When `assign-from-waitlist` displaces an overtime session during a waitlist assignment, it manually updates the `sessions` row (`actual_end_at`, `end_reason`) and inserts a `session_events` row directly, instead of calling the shared `endSession()` helper used by `assign-court` and `end-session`. This means overtime takeover via `assign-from-waitlist` bypasses the uncleared-session streak update in `end_session_atomic`.
+
+**Impact:** Member uncleared streaks may not increment correctly when a session is displaced by a waitlist assignment. The streak logic works correctly for all other session-end paths.
+
+**Fix:** Replace the manual update block in `assign-from-waitlist/index.ts` with a call to `endSession()` from `_shared/sessionLifecycle.ts`.
+
+### `assign-from-waitlist` and `join-waitlist` use non-standard response envelopes
+
+These two functions do not use the shared helpers from `_shared/response.ts`:
+
+- `assign-from-waitlist` returns `{ ok: false, error: string, serverNow }` for all errors (HTTP 200), rather than `{ ok: false, code, message, serverNow }` (HTTP 4xx/5xx). The `code` field is absent in the current production deploy.
+- `join-waitlist` returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper rather than `errorResponse()` / `internalErrorResponse()`.
+
+Both deviations are documented in the integration test comments. The integration tests assert against the actual production wire format, not the shape implied by the shared helpers.
+
+## Recent fixes
+
+### 2026-04-03 — `end_session_atomic` double-end now returns 409 instead of 500
+
+**Symptom:** Calling `end-session` on an already-ended session returned HTTP 500 instead of HTTP 409 `SESSION_ALREADY_ENDED`.
+
+**Root cause:** The production `end_session_atomic` database function had an older signature with swapped parameter order (`p_server_now` before `p_device_id`). When the corrected version was applied via `CREATE OR REPLACE FUNCTION`, PostgreSQL created a second overload with a different signature rather than replacing the original, causing an ambiguous-function error on every double-end call.
+
+**Fix:** Dropped the old overload (`DROP FUNCTION IF EXISTS public.end_session_atomic(uuid, text, timestamptz, uuid, jsonb)`), then applied the correct version. Migration: `20260403000000_fix_end_session_atomic_already_ended.sql`.
 
 ## Related
 
