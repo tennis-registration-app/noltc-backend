@@ -5,7 +5,11 @@ import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
 import { generateParticipantKey } from "../_shared/participantKey.ts"
 import {
   GROUP_TYPES,
-  isValidGroupType,
+  requireUuid,
+  requireEnum,
+  requireArray,
+  requireString,
+  isValidationError,
   successResponse,
   errorResponse,
   conflictResponse,
@@ -62,17 +66,26 @@ serve(async (req) => {
     // VALIDATION
     // ===========================================
 
-    if (!requestData.court_id) {
-      throw new Error('court_id is required')
+    const body = requestData as unknown as Record<string, unknown>
+
+    const courtIdResult = requireUuid(body, 'court_id')
+    if (isValidationError(courtIdResult)) {
+      throw new Error(courtIdResult.message)
     }
-    if (!requestData.session_type || !isValidGroupType(requestData.session_type)) {
-      throw new Error(`session_type must be one of: ${GROUP_TYPES.join(', ')}`)
+    const sessionTypeResult = requireEnum(body, 'session_type', GROUP_TYPES)
+    if (isValidationError(sessionTypeResult)) {
+      throw new Error(sessionTypeResult.message)
     }
-    if (!requestData.participants || requestData.participants.length === 0) {
+    const participantsResult = requireArray(body, 'participants')
+    if (isValidationError(participantsResult)) {
+      throw new Error(participantsResult.message)
+    }
+    if (participantsResult.length === 0) {
       throw new Error('At least one participant is required')
     }
-    if (!requestData.device_id) {
-      throw new Error('device_id is required')
+    const deviceIdResult = requireString(body, 'device_id')
+    if (isValidationError(deviceIdResult)) {
+      throw new Error(deviceIdResult.message)
     }
 
     // Validate participant count for session type
