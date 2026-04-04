@@ -3,7 +3,6 @@
 
 CREATE OR REPLACE FUNCTION end_sessions_for_started_blocks()
 RETURNS INTEGER
-LANGUAGE plpgsql
 AS $$
 DECLARE
   v_ended_count INTEGER := 0;
@@ -25,4 +24,4 @@ BEGIN
   
   RETURN v_ended_count;
 END;
-$$;
+$$ LANGUAGE plpgsql;

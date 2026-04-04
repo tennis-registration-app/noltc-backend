@@ -191,19 +191,19 @@ supabase db push
 
 ## Known issues
 
-### `supabase db push` fails on `move_court_atomic` (CLI parser bug)
+### Migration file conventions
 
-`supabase start` and `supabase db push` fail with `SQLSTATE 42601` ("cannot insert multiple commands into a prepared statement") due to `move_court_atomic` and other PL/pgSQL functions in the baseline migration. This is a known upstream bug in the Supabase CLI's prepared-statement parser and affects all tested CLI versions including 2.84.10.
-
-**Impact:** Does not affect production. All functions are deployed and working. The workaround for applying new migrations that contain PL/pgSQL functions is to paste the SQL directly into the **Supabase Dashboard SQL Editor**.
-
-**Permanent fix:** A contractor can resolve this by splitting `00000000000000_baseline.sql` into separate DDL files (table definitions first, then functions), so no single migration file mixes statement types.
+Migration files use one-function-per-file pattern and post-body `LANGUAGE` placement to work around Supabase CLI statement splitter limitations. Do not combine multiple `$$...$$`-quoted function bodies in a single migration file.
 
 ### `join-waitlist` uses a non-standard response envelope
 
 `join-waitlist` does not use the shared helpers from `_shared/response.ts`. It returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper rather than `errorResponse()` / `internalErrorResponse()`. This deviation is documented in the integration test comments. The integration tests assert against the actual production wire format, not the shape implied by the shared helpers.
 
 ## Recent fixes
+
+### 2026-04-04 — Fixed Supabase CLI migration friction
+
+Split baseline functions into individual files (one per function) and fixed `LANGUAGE` placement in 5 additive migrations. `supabase start` and `supabase db push` now work cleanly.
 
 ### 2026-04-04 — `assign-from-waitlist` overtime takeover now uses shared `endSession()` helper
 

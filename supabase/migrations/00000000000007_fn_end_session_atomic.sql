@@ -1,9 +1,6 @@
--- Fix end_session_atomic: production has an older version that returns
--- {success: false, error: "Session not found or already ended"} instead of
--- {success: false, already_ended: true} for already-ended sessions.
--- This causes a 500 instead of a graceful 409 on double-end calls.
--- Re-deploying the correct version from 20260118020411_update_end_session_atomic_with_streak.sql.
-
+-- ============================================================================
+-- FUNCTION: end_session_atomic
+-- ============================================================================
 CREATE OR REPLACE FUNCTION end_session_atomic(
   p_session_id UUID,
   p_end_reason TEXT,
@@ -12,12 +9,14 @@ CREATE OR REPLACE FUNCTION end_session_atomic(
   p_event_data JSONB DEFAULT '{}'::JSONB
 )
 RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_session RECORD;
   v_end_reason TEXT;
   v_merged_event_data JSONB;
-  v_registrant_id UUID;
 BEGIN
   -- Validate end_reason
   v_end_reason := COALESCE(p_end_reason, 'cleared');
@@ -29,7 +28,7 @@ BEGIN
   END IF;
 
   -- Get session and check if already ended (with row lock to prevent races)
-  SELECT id, actual_end_at, court_id, registered_by_member_id
+  SELECT id, actual_end_at, court_id
   INTO v_session
   FROM sessions
   WHERE id = p_session_id
@@ -77,24 +76,7 @@ BEGIN
     end_reason = v_end_reason
   WHERE id = p_session_id;
 
-  -- Step 3: Update uncleared session streak for registrant
-  v_registrant_id := v_session.registered_by_member_id;
-
-  IF v_registrant_id IS NOT NULL THEN
-    IF v_end_reason = 'cleared' THEN
-      -- Player properly cleared their court - reset streak to 0
-      UPDATE members
-      SET uncleared_streak = 0
-      WHERE id = v_registrant_id;
-    ELSE
-      -- Session ended without player clearing - increment streak
-      UPDATE members
-      SET uncleared_streak = uncleared_streak + 1
-      WHERE id = v_registrant_id;
-    END IF;
-  END IF;
-
-  -- All succeeded - return success
+  -- Both succeeded - return success
   RETURN jsonb_build_object(
     'success', true,
     'already_ended', false,
@@ -103,15 +85,10 @@ BEGIN
 
 EXCEPTION
   WHEN OTHERS THEN
-    -- Any error rolls back all operations
+    -- Any error rolls back both operations
     RETURN jsonb_build_object(
       'success', false,
       'error', SQLERRM
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-ALTER FUNCTION end_session_atomic(UUID, TEXT, UUID, TIMESTAMPTZ, JSONB) SET search_path = public, pg_temp;
-
-COMMENT ON FUNCTION end_session_atomic IS
-  'Atomically ends a session: inserts END event, updates session cache, and updates registrant uncleared streak';
+$$;

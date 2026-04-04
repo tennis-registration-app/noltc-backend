@@ -10,9 +10,6 @@ CREATE OR REPLACE FUNCTION end_session_atomic(
   p_event_data JSONB DEFAULT '{}'::JSONB
 )
 RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_session RECORD;
@@ -110,7 +107,9 @@ EXCEPTION
       'error', SQLERRM
     );
 END;
-$$;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+ALTER FUNCTION end_session_atomic(UUID, TEXT, UUID, TIMESTAMPTZ, JSONB) SET search_path = public, pg_temp;
 
 COMMENT ON FUNCTION end_session_atomic IS
   'Atomically ends a session: inserts END event, updates session cache, and updates registrant uncleared streak';

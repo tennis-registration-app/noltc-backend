@@ -4,7 +4,6 @@
 
 CREATE OR REPLACE FUNCTION end_sessions_for_started_blocks()
 RETURNS INTEGER
-LANGUAGE plpgsql
 AS $$
 DECLARE
   v_ended_count INTEGER := 0;
@@ -27,7 +26,7 @@ BEGIN
 
   RETURN v_ended_count;
 END;
-$$;
+$$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION end_sessions_for_started_blocks IS
   'Ends active sessions on courts with active blocks, except wet blocks which are overlays only';

@@ -12,9 +12,6 @@ CREATE OR REPLACE FUNCTION insert_ball_purchase_split(
   p_idempotency_base TEXT        -- nullable; base key from client
 )
 RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_tx RECORD;
@@ -75,7 +72,9 @@ EXCEPTION
       'error', SQLERRM
     );
 END;
-$$;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+ALTER FUNCTION insert_ball_purchase_split(TEXT[], UUID, INTEGER, TEXT, UUID, TEXT) SET search_path = public, pg_temp;
 
 COMMENT ON FUNCTION insert_ball_purchase_split IS
   'Atomically inserts split ball purchase transactions. Uses array index in idempotency key to allow duplicate account IDs (family members on same account).';
