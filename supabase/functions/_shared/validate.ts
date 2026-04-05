@@ -2,7 +2,7 @@
  * Input validation helpers for Edge Functions
  */
 
-import { END_REASONS, WAITLIST_STATUSES, GROUP_TYPES } from './constants.ts';
+import { END_REASONS, GROUP_TYPES } from './constants.ts';
 
 export type ValidationError = {
   field: string;

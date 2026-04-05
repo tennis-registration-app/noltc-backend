@@ -86,7 +86,7 @@ The seed data files (`00000000000001_seed_data.sql`, `00000000000002_dev_test_da
 
 ## Sharp Edges for New Developers
 
-### assign-court/index.ts (601 lines) — highest-risk backend file
+### assign-court/index.ts (524 lines) — highest-risk backend file
 
 `supabase/functions/assign-court/index.ts` is the most consequential Edge Function. It handles:
 - Operating hours enforcement

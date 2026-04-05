@@ -6,7 +6,7 @@ import { generateParticipantKey } from "../_shared/participantKey.ts"
 import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
 import { verifyDevice } from "../_shared/deviceLookup.ts"
 import { fetchBoardState } from "../_shared/boardFetch.ts"
-import { corsHeaders } from "../_shared/cors.ts"
+import { corsHeaders, successResponse, addCorsHeaders } from "../_shared/index.ts"
 
 interface AssignFromWaitlistRequest {
   waitlist_id: string
@@ -337,9 +337,7 @@ serve(async (req) => {
     // Fetch updated board state so frontend can apply without a separate refetch
     const board = await fetchBoardState(supabase, 'assign-from-waitlist');
 
-    return new Response(JSON.stringify({
-      ok: true,
-      serverNow,
+    return addCorsHeaders(successResponse({
       session: {
         id: session.id,
         court_id: session.court_id,
@@ -361,10 +359,7 @@ serve(async (req) => {
       isInheritedEndTime: !!inheritedEndTime,
       inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,
       board,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    }, serverNow))
 
   } catch (error) {
     // Audit log - failure
