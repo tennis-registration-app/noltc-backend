@@ -160,3 +160,92 @@ export async function processBallPurchase(
       })
   }
 }
+
+// ---------------------------------------------------------------------------
+// createSessionWithFees
+// ---------------------------------------------------------------------------
+
+export interface SessionParticipantInput {
+  member_id: string | null
+  guest_name: string | null
+  participant_type: 'member' | 'guest'
+  account_id: string
+  charged_to_account_id?: string | null
+}
+
+export interface CreateSessionOptions {
+  sessionId: string
+  courtId: string
+  sessionType: string
+  durationMinutes: number
+  startedAt: string        // ISO string
+  scheduledEndAt: string   // ISO string, already computed (includes re-reg inheritance)
+  deviceId: string
+  participantKey: string | null
+  registeredByMemberId: string | null
+  participants: SessionParticipantInput[]
+  dayOfWeek: number        // 0=Sun–6=Sat; used to resolve weekday/weekend guest fee rate
+  addBalls: boolean
+  splitBalls: boolean
+}
+
+export interface CreateSessionResult {
+  session_id: string
+  transaction_ids: string[]
+}
+
+/**
+ * Create a session, its participants, and any associated transactions
+ * (guest fees, ball purchase) in a single atomic DB transaction via RPC.
+ *
+ * Reads guest_fee_cents and ball_price_cents from system_settings, then
+ * delegates all writes to the create_session_with_fees Postgres function.
+ * If any step fails inside the RPC, the entire transaction is rolled back.
+ */
+export async function createSessionWithFees(
+  supabase: any,
+  options: CreateSessionOptions
+): Promise<{ data: CreateSessionResult | null; error: any }> {
+  // Resolve guest fee rate if any guests are present
+  let guestFeeCents = 0
+  const hasGuests = options.participants.some(p => p.participant_type === 'guest')
+
+  if (hasGuests) {
+    const isWeekend = options.dayOfWeek === 0 || options.dayOfWeek === 6
+    const feeKey = isWeekend ? 'guest_fee_weekend_cents' : 'guest_fee_weekday_cents'
+    const { data: feeSetting } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', feeKey)
+      .single()
+    guestFeeCents = feeSetting ? parseInt(feeSetting.value) : (isWeekend ? 2000 : 1500)
+  }
+
+  // Resolve ball price if add_balls was requested
+  let ballPriceCents = 0
+  if (options.addBalls) {
+    const { data: ballSetting } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'ball_price_cents')
+      .single()
+    ballPriceCents = ballSetting ? parseInt(ballSetting.value) : 500
+  }
+
+  return supabase.rpc('create_session_with_fees', {
+    p_session_id:              options.sessionId,
+    p_court_id:                options.courtId,
+    p_session_type:            options.sessionType,
+    p_duration_minutes:        options.durationMinutes,
+    p_started_at:              options.startedAt,
+    p_scheduled_end_at:        options.scheduledEndAt,
+    p_device_id:               options.deviceId,
+    p_participant_key:         options.participantKey,
+    p_registered_by_member_id: options.registeredByMemberId,
+    p_participants:            options.participants,
+    p_guest_fee_cents:         guestFeeCents,
+    p_add_balls:               options.addBalls,
+    p_ball_price_cents:        ballPriceCents,
+    p_split_balls:             options.splitBalls,
+  })
+}

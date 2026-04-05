@@ -13,8 +13,7 @@ import {
   verifyDevice,
   fetchBoardState,
   lookupDuration,
-  processGuestFees,
-  processBallPurchase,
+  createSessionWithFees,
   corsHeaders,
   addCorsHeaders,
   successResponse,
@@ -418,25 +417,43 @@ serve(async (req) => {
     // Get registrant member_id (first member in participants list)
     const registrantMemberId = requestData.participants.find(p => p.type === 'member')?.member_id || null
 
-    const { data: session, error: sessionError } = await supabase
-      .from('sessions')
-      .insert({
-        id: newSessionId, // Use pre-generated ID for traceability
-        court_id: requestData.court_id,
-        session_type: requestData.session_type,
-        duration_minutes: durationMinutes,
-        started_at: startedAt.toISOString(),
-        scheduled_end_at: scheduledEndAt.toISOString(),
-        created_by_device_id: requestData.device_id,
-        participant_key: participantKey,
-        registered_by_member_id: registrantMemberId,
-      })
-      .select()
-      .single()
+    // ===========================================
+    // CREATE SESSION, PARTICIPANTS, AND TRANSACTIONS (ATOMIC RPC)
+    // ===========================================
 
-    if (sessionError || !session) {
-      console.error(`[assign-court] Failed to create session:`, sessionError)
-      throw new Error(`Failed to create session: ${sessionError?.message}`)
+    const { data: rpcResult, error: rpcError } = await createSessionWithFees(supabase, {
+      sessionId: newSessionId,
+      courtId: requestData.court_id,
+      sessionType: requestData.session_type,
+      durationMinutes,
+      startedAt: startedAt.toISOString(),
+      scheduledEndAt: scheduledEndAt.toISOString(),
+      deviceId: requestData.device_id,
+      participantKey,
+      registeredByMemberId: registrantMemberId,
+      participants: requestData.participants.map(p => ({
+        member_id: p.type === 'member' ? (p.member_id ?? null) : null,
+        guest_name: p.type === 'guest' ? (p.guest_name ?? null) : null,
+        participant_type: p.type,
+        account_id: p.account_id,
+        charged_to_account_id: p.charged_to_account_id ?? null,
+      })),
+      dayOfWeek,
+      addBalls: requestData.add_balls || false,
+      splitBalls: requestData.split_balls || false,
+    })
+
+    if (rpcError || !rpcResult) {
+      throw new Error(`Failed to create session: ${rpcError?.message}`)
+    }
+
+    const session = {
+      id: rpcResult.session_id as string,
+      court_id: requestData.court_id,
+      session_type: requestData.session_type,
+      duration_minutes: durationMinutes,
+      started_at: startedAt.toISOString(),
+      scheduled_end_at: scheduledEndAt.toISOString(),
     }
 
     auditEntityId = session.id
@@ -445,52 +462,6 @@ serve(async (req) => {
     const restoreUntil = displacedSessionId
       ? new Date(new Date(serverNow).getTime() + 30000).toISOString()
       : null
-
-    // ===========================================
-    // CREATE PARTICIPANTS
-    // ===========================================
-
-    const participantRecords = requestData.participants.map(p => ({
-      session_id: session.id,
-      member_id: p.type === 'member' ? p.member_id : null,
-      guest_name: p.type === 'guest' ? p.guest_name : null,
-      participant_type: p.type,
-      account_id: p.account_id,
-    }))
-
-    const { error: participantsError } = await supabase
-      .from('session_participants')
-      .insert(participantRecords)
-
-    if (participantsError) {
-      throw new Error(`Failed to add participants: ${participantsError.message}`)
-    }
-
-    // ===========================================
-    // PROCESS GUEST FEES
-    // ===========================================
-
-    await processGuestFees(
-      supabase,
-      requestData.participants
-        .filter(p => p.type === 'guest')
-        .map(p => ({ guest_name: p.guest_name!, account_id: p.account_id, charged_to_account_id: p.charged_to_account_id })),
-      session.id,
-      requestData.device_id,
-      dayOfWeek
-    )
-
-    // ===========================================
-    // PROCESS BALL PURCHASE
-    // ===========================================
-
-    await processBallPurchase(supabase, {
-      addBalls: requestData.add_balls || false,
-      splitBalls: requestData.split_balls,
-      participants: requestData.participants.map(p => ({ account_id: p.account_id, isMember: p.type === 'member' })),
-      sessionId: session.id,
-      deviceId: requestData.device_id,
-    })
 
     // ===========================================
     // AUDIT LOG - SUCCESS

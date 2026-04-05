@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { enforceGeofence } from "../_shared/geofenceCheck.ts"
-import { lookupDuration, processGuestFees, processBallPurchase } from "../_shared/courtAssignment.ts"
+import { lookupDuration, createSessionWithFees } from "../_shared/courtAssignment.ts"
 import { generateParticipantKey } from "../_shared/participantKey.ts"
 import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
 import { verifyDevice } from "../_shared/deviceLookup.ts"
@@ -237,72 +237,48 @@ serve(async (req) => {
     // Get registrant member_id (first member in waitlist)
     const registrantMemberId = waitlistMembers.find(wm => wm.participant_type === 'member')?.member_id || null
 
-    const { data: session, error: sessionError } = await supabase
-      .from('sessions')
-      .insert({
-        court_id: requestData.court_id,
-        session_type: waitlistEntry.group_type,
-        duration_minutes: durationMinutes,
-        started_at: startedAt.toISOString(),
-        scheduled_end_at: scheduledEndAt.toISOString(),
-        created_by_device_id: requestData.device_id,
-        participant_key: participantKey,
-        registered_by_member_id: registrantMemberId,
-      })
-      .select()
-      .single()
+    // ===========================================
+    // CREATE SESSION, PARTICIPANTS, AND TRANSACTIONS (ATOMIC RPC)
+    // ===========================================
 
-    if (sessionError || !session) {
-      throw new Error(`Failed to create session: ${sessionError?.message}`)
+    const newSessionId = crypto.randomUUID()
+
+    const { data: rpcResult, error: rpcError } = await createSessionWithFees(supabase, {
+      sessionId: newSessionId,
+      courtId: requestData.court_id,
+      sessionType: waitlistEntry.group_type,
+      durationMinutes,
+      startedAt: startedAt.toISOString(),
+      scheduledEndAt: scheduledEndAt.toISOString(),
+      deviceId: requestData.device_id,
+      participantKey,
+      registeredByMemberId: registrantMemberId,
+      participants: waitlistMembers.map(wm => ({
+        member_id: wm.participant_type === 'member' ? (wm.member_id ?? null) : null,
+        guest_name: wm.participant_type === 'guest' ? (wm.guest_name ?? null) : null,
+        participant_type: wm.participant_type,
+        account_id: wm.account_id,
+        charged_to_account_id: null,
+      })),
+      dayOfWeek: now.getDay(),
+      addBalls: requestData.add_balls || false,
+      splitBalls: requestData.split_balls || false,
+    })
+
+    if (rpcError || !rpcResult) {
+      throw new Error(`Failed to create session: ${rpcError?.message}`)
+    }
+
+    const session = {
+      id: rpcResult.session_id as string,
+      court_id: requestData.court_id,
+      session_type: waitlistEntry.group_type,
+      duration_minutes: durationMinutes,
+      started_at: startedAt.toISOString(),
+      scheduled_end_at: scheduledEndAt.toISOString(),
     }
 
     sessionId = session.id
-
-    // ===========================================
-    // CREATE SESSION PARTICIPANTS
-    // ===========================================
-
-    const participantRecords = waitlistMembers.map(wm => ({
-      session_id: session.id,
-      member_id: wm.participant_type === 'member' ? wm.member_id : null,
-      guest_name: wm.participant_type === 'guest' ? wm.guest_name : null,
-      participant_type: wm.participant_type,
-      account_id: wm.account_id,
-    }))
-
-    const { error: participantsError } = await supabase
-      .from('session_participants')
-      .insert(participantRecords)
-
-    if (participantsError) {
-      throw new Error(`Failed to add participants: ${participantsError.message}`)
-    }
-
-    // ===========================================
-    // PROCESS GUEST FEES
-    // ===========================================
-
-    await processGuestFees(
-      supabase,
-      waitlistMembers
-        .filter(wm => wm.participant_type === 'guest')
-        .map(wm => ({ guest_name: wm.guest_name!, account_id: wm.account_id })),
-      session.id,
-      requestData.device_id,
-      now.getDay()
-    )
-
-    // ===========================================
-    // PROCESS BALL PURCHASE
-    // ===========================================
-
-    await processBallPurchase(supabase, {
-      addBalls: requestData.add_balls || false,
-      splitBalls: requestData.split_balls,
-      participants: waitlistMembers.map(wm => ({ account_id: wm.account_id, isMember: wm.participant_type === 'member' })),
-      sessionId: session.id,
-      deviceId: requestData.device_id,
-    })
 
     // ===========================================
     // UPDATE WAITLIST ENTRY
