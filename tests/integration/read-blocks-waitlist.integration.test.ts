@@ -143,19 +143,35 @@ describe.skipIf(MISSING_ENV)('read endpoints — blocks / waitlist (integration)
   // that uses the view path.
 
   describe('get-waitlist', () => {
-    it('returns HTTP 400 because active_waitlist_view is not deployed [view pending]', async () => {
+    it('returns 200 with ok:true, count, and waitlist array', async () => {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/get-waitlist`, {
         headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.ok).toBe(false);
-      expect(typeof body.error).toBe('string');
-      expect(body.error).toMatch(/active_waitlist_view/i);
+      expect(body.ok).toBe(true);
+      expect(typeof body.count).toBe('number');
+      expect(Array.isArray(body.waitlist)).toBe(true);
+      expect(typeof body.timestamp).toBe('string');
     });
 
-    it.todo('returns 200 with ok:true, count, and waitlist array [requires active_waitlist_view deployed]');
-    it.todo('waitlist entries have id, position, group_type, joined_at, participants fields [requires view]');
+    it('waitlist entries have id, position, group_type, joined_at, participants fields', async () => {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/get-waitlist`, {
+        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      });
+      const body = await res.json() as any;
+
+      expect(body.ok).toBe(true);
+      // Only assert shape if there are entries; an empty waitlist is also valid
+      if (body.waitlist.length > 0) {
+        const entry = body.waitlist[0];
+        expect(typeof entry.id).toBe('string');
+        expect(typeof entry.position).toBe('number');
+        expect(typeof entry.group_type).toBe('string');
+        expect(typeof entry.joined_at).toBe('string');
+        expect(Array.isArray(entry.participants)).toBe(true);
+      }
+    });
   });
 });
