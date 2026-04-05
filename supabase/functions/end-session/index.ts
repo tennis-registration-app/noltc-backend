@@ -124,7 +124,6 @@ serve(async (req) => {
         }
       }
 
-      console.log(`Ended ${sessionsEnded}/${activeSessions.length} sessions on court ${resolvedCourtId}`);
       if (cacheFailures.length > 0) {
         console.error(`[end-session] ⚠️ ${cacheFailures.length} session(s) have stale cache - needs repair`);
       }

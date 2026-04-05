@@ -79,7 +79,6 @@ serve(async (req) => {
     }
 
     // Get waitlist entry details before removal
-    console.log('[remove-from-waitlist] Looking up waitlist entry:', waitlist_entry_id);
     const { data: entry, error: entryError } = await supabase
       .from('waitlist')
       .select(
@@ -96,8 +95,6 @@ serve(async (req) => {
       )
       .eq('id', waitlist_entry_id)
       .single();
-
-    console.log('[remove-from-waitlist] Query result:', { entry, entryError });
 
     if (entryError || !entry) {
       console.error('[remove-from-waitlist] Entry not found. Error:', entryError);

@@ -56,7 +56,6 @@ serve(async (req) => {
 
     // 2. If disabled, return early
     if (!autoClearEnabled) {
-      console.log('[auto-clear-sessions] Auto-clear is disabled');
       return addCorsHeaders(
         successResponse(
           {
@@ -70,7 +69,6 @@ serve(async (req) => {
 
     // 3. Calculate cutoff time
     const cutoffTime = new Date(Date.now() - autoClearMinutes * 60 * 1000).toISOString();
-    console.log(`[auto-clear-sessions] Looking for sessions started before ${cutoffTime} (${autoClearMinutes} minutes ago)`);
 
     // 4. Query for stale sessions
     const { data: staleSessions, error: queryError } = await supabase
@@ -93,7 +91,6 @@ serve(async (req) => {
     }
 
     if (!staleSessions || staleSessions.length === 0) {
-      console.log('[auto-clear-sessions] No stale sessions found');
       return addCorsHeaders(
         successResponse(
           {
@@ -104,8 +101,6 @@ serve(async (req) => {
         )
       );
     }
-
-    console.log(`[auto-clear-sessions] Found ${staleSessions.length} stale session(s) to clear`);
 
     // 5. End each stale session
     const results: ClearResult[] = [];
@@ -133,7 +128,6 @@ serve(async (req) => {
             courtNumber,
             success: true,
           });
-          console.log(`[auto-clear-sessions] Cleared session ${session.id} on court ${courtNumber}`);
         } else if (result.alreadyEnded) {
           results.push({
             sessionId: session.id,
@@ -141,7 +135,6 @@ serve(async (req) => {
             success: true,
             error: 'Already ended',
           });
-          console.log(`[auto-clear-sessions] Session ${session.id} was already ended`);
         } else {
           results.push({
             sessionId: session.id,
@@ -168,7 +161,6 @@ serve(async (req) => {
     }
 
     // 6. Return summary
-    console.log(`[auto-clear-sessions] Cleared ${clearedCount}/${staleSessions.length} sessions`);
     return addCorsHeaders(
       successResponse(
         {

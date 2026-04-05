@@ -133,8 +133,6 @@ function generateToolDescription(toolName: string, args: Record<string, unknown>
 function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
   switch (toolName) {
     case 'create_block': {
-      console.log('[AI Debug] create_block args received:', JSON.stringify(args));
-
       const courtNum = Number(args.court_number);
       if (!args.court_number || isNaN(courtNum) || courtNum < 1 || courtNum > 12) {
         return { ok: false, error: 'create_block requires valid court_number (1-12)' };
@@ -362,7 +360,6 @@ async function executeToolViaEndpoint(
     add_holiday_hours: {
       endpoint: 'update-system-settings',
       transformArgs: async (args, _supabase, deviceId) => {
-        console.log('[AI Debug] add_holiday_hours args:', JSON.stringify(args));
         const override: Record<string, unknown> = {
           date: args.date,
           is_closed: args.is_closed
@@ -380,7 +377,6 @@ async function executeToolViaEndpoint(
           operating_hours_override: override,
           initiated_by: 'ai_assistant'
         };
-        console.log('[AI Debug] add_holiday_hours transformed:', JSON.stringify(transformed));
         return transformed;
       }
     },
@@ -464,8 +460,6 @@ async function executeToolViaEndpoint(
     });
   } else {
     // POST request with body
-    console.log('[AI Debug] Calling POST endpoint:', `${supabaseUrl}/functions/v1/${actualEndpoint}`);
-    console.log('[AI Debug] Request body:', JSON.stringify(transformedArgs));
     response = await fetch(`${supabaseUrl}/functions/v1/${actualEndpoint}`, {
       method: 'POST',
       headers: {
@@ -479,16 +473,11 @@ async function executeToolViaEndpoint(
     });
   }
 
-  // Debug logging for endpoint response
   const responseText = await response.text();
-  console.log('[AI Debug] Endpoint response status:', response.status);
-  console.log('[AI Debug] Endpoint response body:', responseText.substring(0, 500));
-
   let result;
   try {
     result = JSON.parse(responseText);
   } catch (e) {
-    console.log('[AI Debug] Failed to parse JSON response');
     return { ok: false, error: `Invalid JSON response: ${responseText.substring(0, 100)}` };
   }
 
@@ -524,7 +513,6 @@ async function checkRateLimit(
     // Fail open - allow request if we can't check
     return { ok: true };
   }
-  console.log('[AI Debug] Rate limit check - count:', count, 'limit:', RATE_LIMIT);
 
   if (count && count >= RATE_LIMIT) {
     return {
@@ -1022,14 +1010,6 @@ IMPORTANT RULES:
 
 The user is an administrator with full access to manage courts, blocks, and settings.`
 
-    console.log('[AI Debug] Mode:', mode);
-    console.log('[AI Debug] Tools count:', filteredTools.length);
-    console.log('[AI Debug] Tool names:', filteredTools.map(t => t.name));
-    console.log('[AI Debug] System prompt length:', systemPrompt.length);
-    console.log('[AI Debug] User prompt:', requestData.prompt);
-    console.log('[AI Debug] serverNow (UTC):', serverNow);
-    console.log('[AI Debug] Today in Central (explicit calc):', todayString);
-
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -1055,10 +1035,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
     const aiResult = await anthropicResponse.json()
 
-    console.log('[AI Debug] Stop reason:', aiResult.stop_reason);
-    console.log('[AI Debug] Content blocks:', aiResult.content?.map((b: any) => b.type));
-    console.log('[AI Debug] Tool calls:', aiResult.content?.filter((b: any) => b.type === 'tool_use').map((b: any) => b.name));
-
     // === DRAFT MODE: Propose actions without executing ===
     if (mode === 'draft') {
       const proposedToolCalls: ProposedToolCall[] = [];
@@ -1068,7 +1044,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
         if (block.type === 'tool_use') {
           // Skip tool calls with empty or missing args
           if (!block.input || Object.keys(block.input as object).length === 0) {
-            console.log('[AI Debug] Skipping tool call with empty args:', block.name);
             continue;
           }
 
@@ -1096,18 +1071,14 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
       // If all proposed tools are read-only, execute immediately (no confirmation needed)
       const allReadOnly = proposedToolCalls.every(tc => TOOL_RISKS[tc.tool]?.level === 'read');
-      console.log('[AI Debug] Proposed tool calls:', proposedToolCalls.length);
-      console.log('[AI Debug] All read-only:', allReadOnly);
 
       if (allReadOnly && proposedToolCalls.length > 0) {
         // Execute read-only tools directly
-        console.log('[AI Debug] Executing read-only tools directly');
         const executedActions: AiAssistantResponse['executed_actions'] = [];
         const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
         const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
         for (const call of proposedToolCalls) {
-          console.log('[AI Debug] Executing tool:', call.tool, 'with args:', JSON.stringify(call.args));
           try {
             const result = await executeToolViaEndpoint(
               call.tool,
@@ -1117,7 +1088,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
               requestData.device_id,
               supabase
             );
-            console.log('[AI Debug] Tool result ok:', result.ok, 'error:', result.error);
             executedActions.push({
               tool: call.tool,
               success: result.ok,
@@ -1125,7 +1095,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
               error: result.error
             });
           } catch (err: any) {
-            console.log('[AI Debug] Tool exception:', err.message);
             executedActions.push({
               tool: call.tool,
               success: false,
@@ -1139,9 +1108,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
           .filter(a => a.success && a.result)
           .map(a => `Data from ${a.tool}:\n${JSON.stringify(a.result, null, 2)}`)
           .join('\n\n');
-
-        console.log('[AI Debug] Data context length:', dataContext.length);
-        console.log('[AI Debug] Successful tools:', executedActions.filter(a => a.success).map(a => a.tool));
 
         const followUpResponse = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -1165,7 +1131,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
         let naturalResponse = textResponse || 'Here is what I found:';
         if (followUpResponse.ok) {
           const followUpResult = await followUpResponse.json();
-          console.log('[AI Debug] Follow-up response received');
           const followUpText = followUpResult.content
             ?.filter((block: any) => block.type === 'text')
             .map((block: any) => block.text)
@@ -1173,8 +1138,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
           if (followUpText) {
             naturalResponse = followUpText;
           }
-        } else {
-          console.log('[AI Debug] Follow-up response failed:', followUpResponse.status);
         }
 
         return new Response(
@@ -1246,10 +1209,8 @@ The user is an administrator with full access to manage courts, blocks, and sett
 
     // === EXECUTE MODE: Verify token and execute proposed actions ===
     if (mode === 'execute') {
-      console.log('[AI Debug] Entering execute mode with token:', actionsToken?.substring(0, 20) + '...');
       // Verify the actions token
       const tokenResult = await verifyActionsToken(actionsToken!, requestData.device_id);
-      console.log('[AI Debug] Token verification result:', tokenResult.ok, tokenResult.error || 'no error');
       if (!tokenResult.ok) {
         return new Response(
           JSON.stringify({ ok: false, error: tokenResult.error }),
@@ -1258,7 +1219,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
       }
 
       const proposedCalls = tokenResult.proposedCalls;
-      console.log('[AI Debug] Proposed calls to execute:', proposedCalls?.length, JSON.stringify(proposedCalls?.map(c => c.tool)));
 
       // Check if high-risk actions require confirmation
       const hasHighRisk = hasHighRiskTools(proposedCalls.map(tc => ({ name: tc.tool })));
@@ -1337,7 +1297,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
           : 'Some actions failed. See executed_actions for details.',
         executed_actions: executedActions
       };
-      console.log('[AI Debug] Execute mode returning:', JSON.stringify(executeResponse));
       return new Response(
         JSON.stringify(executeResponse as AiAssistantResponse),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

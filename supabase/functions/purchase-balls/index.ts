@@ -94,8 +94,6 @@ serve(async (req) => {
 
       if (existingTx) {
         // Return cached result - don't charge again
-        console.log(`[purchase-balls] Idempotent hit: ${requestData.idempotency_key}`)
-
         await supabase.from('audit_log').insert({
           action: 'ball_purchase_idempotent',
           entity_type: 'transaction',

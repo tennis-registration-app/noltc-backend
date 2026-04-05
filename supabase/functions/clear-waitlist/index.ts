@@ -146,16 +146,6 @@ serve(async (req) => {
     }
 
     // Audit log the admin action with context
-    const auditContext = {
-      action: 'clear_waitlist',
-      device_id: device.id,
-      device_type: device.device_type,
-      entries_cancelled: waitingEntries.length,
-      entry_ids: waitingEntries.map((e: { id: string }) => e.id),
-      timestamp: serverNow,
-    };
-    console.log(`[clear-waitlist] SUCCESS:`, JSON.stringify(auditContext));
-
     // Write to audit_log table for persistent tracking
     await supabase.from('audit_log').insert({
       action: 'clear_waitlist',

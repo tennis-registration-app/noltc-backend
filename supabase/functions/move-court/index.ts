@@ -161,11 +161,6 @@ serve(async (req) => {
     }
 
     if (!result.ok) {
-      // Log the rejection
-      console.log(
-        `[move-court] Rejected: ${result.code} - ${result.message} (${device.device_type}:${device.id})`
-      );
-
       // Audit log the failure
       await supabase.from('audit_log').insert({
         action: 'move_court',
@@ -184,11 +179,6 @@ serve(async (req) => {
       }
       return addCorsHeaders(conflictResponse(result.code, result.message, serverNow));
     }
-
-    // Log the successful move
-    console.log(
-      `[move-court] Session ${result.sessionId} moved from ${result.fromCourtId} to ${result.toCourtId} by ${device.device_type}:${device.id}`
-    );
 
     // Audit log the success
     await supabase.from('audit_log').insert({

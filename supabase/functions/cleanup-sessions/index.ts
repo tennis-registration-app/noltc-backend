@@ -105,9 +105,6 @@ serve(async (req) => {
       .select('session_id, created_at')
       .eq('event_type', 'END')
 
-    console.log('Cleanup debug: found', orphanedSessions?.length || 0, 'END events')
-    console.log('Cleanup debug: found', sessions?.length || 0, 'active sessions (actual_end_at is null)')
-
     const orphanedToFix: { id: string; endedAt: string }[] = []
     if (!orphanError && orphanedSessions) {
       const endedSessionIds = new Set(orphanedSessions.map(e => e.session_id))
@@ -118,7 +115,6 @@ serve(async (req) => {
 
       for (const s of sessions || []) {
         if (endedSessionIds.has(s.id)) {
-          console.log('Cleanup debug: session', s.id, 'has END event, will fix')
           orphanedToFix.push({
             id: s.id,
             endedAt: endEventTimes[s.id] || new Date().toISOString()
@@ -126,13 +122,11 @@ serve(async (req) => {
         }
       }
     }
-    console.log('Cleanup debug: orphanedToFix count:', orphanedToFix.length)
 
     // Fix orphaned sessions by setting actual_end_at to END event time
     let orphanedFixed = 0
     const fixErrors: string[] = []
     for (const orphan of orphanedToFix) {
-      console.log('Cleanup: fixing orphan', orphan.id, 'with endedAt', orphan.endedAt)
       const { error: fixError } = await supabase
         .from('sessions')
         .update({
@@ -145,7 +139,6 @@ serve(async (req) => {
         console.error('Cleanup: fix error for', orphan.id, fixError)
         fixErrors.push(`${orphan.id}: ${fixError.message}`)
       } else {
-        console.log('Cleanup: fixed orphan', orphan.id)
         orphanedFixed++
       }
     }

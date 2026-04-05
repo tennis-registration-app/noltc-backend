@@ -51,8 +51,6 @@ serve(async (req) => {
     }
 
     // Cache miss - call live RPC and trigger background cache refresh
-    console.log('[get-frequent-partners] Cache miss for member:', member_id)
-
     // Call live RPC function
     const { data: livePartners, error: rpcError } = await supabaseClient
       .rpc('get_frequent_partners', { p_member_id: member_id })
@@ -78,7 +76,6 @@ serve(async (req) => {
     // Trigger background cache refresh (fire-and-forget)
     supabaseClient
       .rpc('refresh_single_member_cache', { p_member_id: member_id })
-      .then(() => console.log('[get-frequent-partners] Cache refreshed for:', member_id))
       .catch((err: any) => console.error('[get-frequent-partners] Cache refresh failed:', err))
 
     return new Response(

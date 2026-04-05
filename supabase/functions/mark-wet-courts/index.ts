@@ -105,7 +105,6 @@ serve(async (req) => {
       .maybeSingle()
 
     if (existingAction) {
-      console.log(`[mark-wet-courts] Idempotent hit: ${idempotencyKey}`)
       return new Response(JSON.stringify({
         ok: true,
         serverNow,

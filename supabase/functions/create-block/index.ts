@@ -286,7 +286,6 @@ serve(async (req) => {
           ip_address: req.headers.get('x-forwarded-for') || 'unknown',
         })
 
-        console.log(`Ended session ${activeSession.id} to create block on court ${requestData.court_id}`)
       }
     }
 

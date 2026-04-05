@@ -32,10 +32,6 @@ serve(async (req) => {
       // Don't fail the request, just log the error
     }
 
-    if (endedCount && endedCount > 0) {
-      console.log(`Ended ${endedCount} session(s) due to block start`);
-    }
-
     // Get court board using the exact same timestamp
     const { data: courts, error: courtsError } = await supabase.rpc('get_court_board', {
       request_time: serverNow,
