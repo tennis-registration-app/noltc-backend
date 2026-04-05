@@ -56,7 +56,7 @@ serve(async (req) => {
       );
     }
 
-    let targetSessionId = session_id;
+    const targetSessionId = session_id;
     let resolvedCourtId = court_id;
 
     // If court_id provided, find the active session for that court
@@ -107,7 +107,7 @@ serve(async (req) => {
 
       // End ALL sessions on this court
       let sessionsEnded = 0;
-      let cacheFailures: string[] = [];
+      const cacheFailures: string[] = [];
       for (const session of activeSessions) {
         const result = await endSession(supabase, {
           sessionId: session.id,

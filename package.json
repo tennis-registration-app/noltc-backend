@@ -18,7 +18,7 @@
     "functions:serve": "supabase functions serve",
     "functions:deploy": "supabase functions deploy",
     "gen:types": "supabase gen types typescript --linked > src/types/database.ts",
-    "lint": "eslint supabase/functions/_shared/ tests/",
+    "lint": "eslint supabase/functions/ tests/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",

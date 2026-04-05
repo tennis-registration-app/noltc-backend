@@ -150,7 +150,7 @@ serve(async (req) => {
     // ===========================================
 
     // Build query for transactions in date range
-    let query = supabase
+    const query = supabase
       .from('transactions')
       .select(`
         id,

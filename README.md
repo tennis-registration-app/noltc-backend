@@ -34,7 +34,7 @@ npm run verify
 
 | Command | What it checks |
 |---|---|
-| `npm run lint` | ESLint (TypeScript rules) on `supabase/functions/_shared/` and `tests/` |
+| `npm run lint` | ESLint (TypeScript rules) on all `supabase/functions/` and `tests/` |
 | `npm run typecheck` | `tsc --noEmit` on `_shared/` modules and test files |
 | `npm run test` | Vitest unit tests in `tests/unit/` |
 
@@ -48,9 +48,13 @@ npm run test
 
 ### Current scope
 
-The verification gate covers the **shared pure-function modules** and their mock-based tests. It does **not** cover the 41 Edge Function `index.ts` entrypoints.
+The verification gate covers all Edge Function entrypoints (lint) and the shared pure-function modules (lint + typecheck + unit tests).
 
-Covered modules:
+**Lint** covers all 41 `supabase/functions/*/index.ts` entrypoints plus all `_shared/` modules and test files. Edge Function files use the Deno global (`Deno.env.get`, etc.) — ESLint is configured with `Deno` as a known global to suppress false positives.
+
+**TypeScript** (`tsc --noEmit`) covers `_shared/` modules and test files only. Edge Function entrypoints import dependencies via HTTPS URLs (`https://deno.land/...`) which are unresolvable by Node-mode `tsc` — expanding the tsconfig to include them would produce hundreds of module-not-found errors. This gap is documented in ADR-006.
+
+Covered `_shared/` modules (lint + typecheck + unit tests):
 
 - `_shared/constants.ts` — enum arrays and type guards
 - `_shared/validate.ts` — input validation helpers
@@ -58,10 +62,11 @@ Covered modules:
 - `_shared/participantKey.ts` — deterministic participant key generation
 - `_shared/sessionLifecycle.ts` — `normalizeEndReason`, `endSession`, `findActiveSessionOnCourt`, `findAllActiveSessionsOnCourt`
 - `_shared/geofence.ts` — `calculateDistance`, `validateLocationToken`
+- `_shared/deviceLookup.ts`, `_shared/boardFetch.ts`, `_shared/geofenceCheck.ts`, `_shared/courtAssignment.ts`, `_shared/cors.ts`, `_shared/operatingHours.ts`
 
 ### What is NOT covered by `npm run verify`
 
-- Individual Edge Function `index.ts` entrypoints (46 functions)
+- TypeScript type-checking of individual Edge Function `index.ts` entrypoints (Deno URL imports incompatible with Node-mode tsc — see ADR-006)
 - Coverage reporting
 - `validateGeofence` in `_shared/geofence.ts` (blocked by module-level `SKIP_GEOFENCE_CHECK` constant)
 
