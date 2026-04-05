@@ -139,7 +139,7 @@ The baseline schema was split into 10 files (prefixed `00000000000000` through `
 - All test fixtures use UUIDs in the `d0000000-*` namespace to avoid collisions with real data.
 - Tests run sequentially (`fileParallelism: false` in `vitest.integration.config.ts`) to prevent shared-state contamination between tests.
 - Two `assign-court` tests depend on the club being within operating hours (America/Chicago). They will return a time-related error outside business hours — this is correct behavior, not a test defect.
-- Integration tests run nightly at 7 AM Central (within operating hours) and can be triggered manually.
+- Integration tests are part of the PR gate (`verify.yml`) when repository secrets are available. Fork PRs skip them (no secret access). The nightly scheduled run at 7 AM Central remains as a separate post-deploy confidence check within operating hours.
 
 ---
 

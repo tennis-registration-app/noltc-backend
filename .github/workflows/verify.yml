@@ -19,3 +19,17 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
+
+      # Integration tests run against the live Supabase instance.
+      # When repository secrets are available (collaborator PRs, pushes to main),
+      # this exercises the full deployed-function surface end-to-end.
+      # Fork PRs will skip gracefully because secrets are not available to forks.
+      # Note: assign-court and join-waitlist happy-path tests are time-dependent —
+      # they may fail if the PR gate runs outside club operating hours (6 AM – 11 PM Central).
+      - name: Run integration tests against live Supabase instance
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run test:integration
+        continue-on-error: false

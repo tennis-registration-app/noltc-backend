@@ -67,7 +67,11 @@ Covered modules:
 
 ### CI
 
-GitHub Actions runs the same `lint → typecheck → test` sequence on every push and pull request to `main`. See `.github/workflows/verify.yml`.
+GitHub Actions runs `lint → typecheck → unit tests → integration tests` on every push and pull request to `main`. See `.github/workflows/verify.yml`.
+
+- **Unit tests** always run (no secrets required).
+- **Integration tests** run when repository secrets are available — collaborator PRs and direct pushes to `main`. Fork PRs skip the integration step because GitHub does not expose secrets to forks.
+- The nightly scheduled run (`.github/workflows/integration-tests.yml`) remains as a separate post-deploy confidence check at 7 AM Central, within club operating hours.
 
 ### Expanding test scope
 
@@ -135,7 +139,7 @@ Requires three repository secrets to be configured at **Settings → Secrets and
 
 ### Important notes
 
-- Integration tests are **not** part of `npm run verify` and are **not** part of the PR gate (`verify.yml`). They run separately via the nightly workflow or manually.
+- Integration tests **are** part of the PR gate (`verify.yml`) when repository secrets are available. Fork PRs skip them because GitHub does not expose secrets to forked repositories. The nightly workflow still runs as a separate post-deploy confidence check.
 - Tests use deterministic UUIDs in the `d0000000-*` range for all test fixtures to avoid collisions with real data.
 - `fileParallelism: false` is set in `vitest.integration.config.ts` — tests run sequentially to prevent cross-test database state contamination.
 - Two test cases (assign-court happy paths) depend on the club being within operating hours (America/Chicago). They will return a time-related error if run outside business hours — this is expected behavior, not a test defect.
