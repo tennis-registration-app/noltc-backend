@@ -104,7 +104,7 @@ docs/               # Schema, RLS, endpoint contracts
 
 The following must be resolved before the system goes live at the club. All are safe for local development and testing in their current state. See [HANDOFF.md](HANDOFF.md) for the full details on each item.
 
-1. **SKIP_GEOFENCE_CHECK → false** — Geofence enforcement is currently disabled. Change the flag in `supabase/functions/_shared/geofence.ts` line 4, then complete the on-site validation protocol documented in HANDOFF.md.
+1. **SKIP_GEOFENCE_CHECK → disable** — Geofence enforcement is currently disabled. In the Supabase Dashboard → Project Settings → Edge Functions → Secrets, remove the `SKIP_GEOFENCE_CHECK` secret or set it to `'false'`. No code deploy needed. Then complete the on-site validation protocol in HANDOFF.md.
 
 2. **AI_ACTIONS_SECRET** — Must be set as a Supabase project secret before the AI assistant endpoint is enabled. See HANDOFF.md § 2.
 

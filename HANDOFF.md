@@ -8,19 +8,15 @@ This document covers what a new developer needs to know before making changes to
 
 These items must be resolved before the system goes live at the club. They are safe for local development and testing in their current state, but will cause problems or security gaps in production.
 
-### 1. SKIP_GEOFENCE_CHECK — must be set to false before go-live
+### 1. SKIP_GEOFENCE_CHECK — must be disabled before go-live
 
-**File:** `supabase/functions/_shared/geofence.ts` line 4
+**Where:** Supabase Dashboard → Project Settings → Edge Functions → Secrets
 
-```ts
-const SKIP_GEOFENCE_CHECK = true;  // ← change to false before production
-```
-
-**What it does:** When `true`, `validateGeofence()` returns success unconditionally with the message "Location check skipped (development mode)". The actual GPS boundary check (enforcing that members are physically at the club) never runs. The QR + GPS dual-verification flow is silently bypassed.
+**What it does:** When the `SKIP_GEOFENCE_CHECK` secret is set to `'true'`, `validateGeofence()` returns success unconditionally with the message "Location check skipped (development mode)". The actual GPS boundary check (enforcing that members are physically at the club) never runs. The QR + GPS dual-verification flow is silently bypassed.
 
 **Impact:** Any member can register courts remotely. The entire mobile presence enforcement system is inactive.
 
-**Fix:** Change `true` to `false`, then complete the on-site validation protocol below before deploying.
+**Fix:** In the Supabase Dashboard, remove the `SKIP_GEOFENCE_CHECK` secret or set its value to `'false'`. No code deploy is needed — the Edge Functions read this at runtime via `Deno.env.get('SKIP_GEOFENCE_CHECK')`. Then complete the on-site validation protocol below.
 
 #### Geofence Go-Live Validation Protocol
 
@@ -52,7 +48,7 @@ This validation requires physical presence at the club and a deployed (not local
 - Check device GPS accuracy — low-accuracy readings can cause false denials; the `accuracy` field in the request is logged in `audit_log` for diagnosis
 - Check Supabase Edge Function logs for `geofence_status: 'failed'` entries in `audit_log` — they include `distance` and `threshold` for debugging
 
-**After validation passes:** Deploy the updated `geofence.ts` with `SKIP_GEOFENCE_CHECK = false`.
+**After validation passes:** In the Supabase Dashboard, remove the `SKIP_GEOFENCE_CHECK` secret or set it to `'false'`. No code deploy needed.
 
 ---
 

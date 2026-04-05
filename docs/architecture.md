@@ -31,7 +31,7 @@ All 41 backend operations are implemented as Supabase Edge Functions — individ
 
 Shared helpers live in `supabase/functions/_shared/`. This directory uses the underscore prefix convention, which tells the Supabase CLI not to deploy it as a function.
 
-**Barrel export:** `_shared/index.ts` re-exports the stable public surface of each shared module. New functions should import from `../\_shared/index.ts` rather than individual files, with one exception: `geofence.ts` is imported directly because its `SKIP_GEOFENCE_CHECK` flag is a pre-production concern that callers should be deliberate about touching.
+**Barrel export:** `_shared/index.ts` re-exports the stable public surface of each shared module. New functions should import from `../\_shared/index.ts` rather than individual files.
 
 **Current shared modules:**
 
@@ -107,7 +107,7 @@ Mobile devices registering courts can be required to prove physical presence at 
 
 Kiosk devices (`device_type = 'kiosk'`) skip geofence validation entirely — they are physically mounted at the club.
 
-**Current status:** Geofence enforcement is disabled via `SKIP_GEOFENCE_CHECK = true` at `_shared/geofence.ts` line 4. This flag exists because geofence validation requires on-site testing with physical mobile devices — it cannot be validated in a development or CI environment. See [HANDOFF.md](../HANDOFF.md) for the go-live validation protocol.
+**Current status:** Geofence enforcement is disabled via the `SKIP_GEOFENCE_CHECK` Supabase project secret (set to `'true'`). The flag exists because geofence validation requires on-site testing with physical mobile devices — it cannot be validated in a development or CI environment. To enable enforcement, remove the secret or set it to `'false'` in the Supabase Dashboard → no code deploy needed. See [HANDOFF.md](../HANDOFF.md) for the go-live validation protocol.
 
 ---
 

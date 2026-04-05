@@ -1,7 +1,9 @@
 // ============================================
-// DEVELOPMENT FLAG - Set to true to skip geofence validation
+// DEVELOPMENT FLAG - Controlled via Supabase project secret SKIP_GEOFENCE_CHECK
+// Set the secret to 'true' to skip validation (dev/testing).
+// Remove the secret or set it to 'false' for production — no code deploy needed.
 // ============================================
-const SKIP_GEOFENCE_CHECK = true // Set to false for production
+const SKIP_GEOFENCE_CHECK = (globalThis as any)?.Deno?.env?.get?.('SKIP_GEOFENCE_CHECK') === 'true'
 
 // Haversine formula to calculate distance between two coordinates
 export function calculateDistance(
