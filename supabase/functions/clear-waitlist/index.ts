@@ -137,7 +137,6 @@ serve(async (req) => {
       .from('waitlist')
       .update({
         status: 'cancelled',
-        cancelled_at: serverNow,
       })
       .eq('status', 'waiting');
 
