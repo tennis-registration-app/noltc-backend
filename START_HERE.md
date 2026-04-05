@@ -27,7 +27,11 @@ cp .env.example .env       # Fill in SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_S
 npm run verify
 ```
 
-`npm run verify` runs lint + typecheck + unit tests (169 tests across 6 `_shared/` modules). This is the PR gate — CI runs this on every push and pull request to `main`.
+`npm run verify` runs lint + typecheck + unit tests. CI runs this on every push and pull request to `main`, followed by integration tests when repository secrets are available.
+
+- **Lint** covers all 41 Edge Function entrypoints plus `_shared/` and `tests/`.
+- **Typecheck** covers `_shared/` and `tests/` only — Edge Function entrypoints import via HTTPS URLs (`https://deno.land/...`) which are unresolvable by Node-mode `tsc`. This is a known limitation, not a gap in practice.
+- **Unit tests** cover `_shared/` modules (169 tests).
 
 **Integration tests** (require live Supabase credentials):
 
@@ -35,7 +39,7 @@ npm run verify
 npm run test:integration
 ```
 
-Runs 160 integration tests across 19 test files against the live deployed Edge Functions. Not part of the PR gate — runs nightly via GitHub Actions and can be triggered manually from the Actions tab.
+Runs 160 integration tests across 19 test files against the live deployed Edge Functions. Also runs on every PR via CI when repository secrets are available — fork PRs skip this step. A separate nightly run fires at 7 AM Central as a post-deploy confidence check.
 
 **Local development** (requires Docker Desktop):
 
@@ -72,10 +76,10 @@ docs/               # Schema, RLS, endpoint contracts
 | Gate | Command | When it runs |
 |------|---------|-------------|
 | Lint + typecheck + unit tests | `npm run verify` | Every PR (CI), before every commit |
-| Integration tests | `npm run test:integration` | Nightly (7 AM Central), manual trigger |
+| Integration tests | `npm run test:integration` | Every PR (when secrets available); nightly at 7 AM Central; manual trigger |
 | Post-deploy validation | `node scripts/test-envelope-contracts.js` | After each production deploy |
 
-**Scope of `npm run verify`:** Covers `_shared/` modules and their unit tests only. It does **not** lint or typecheck the 41 individual Edge Function `index.ts` entrypoints. See README.md for details.
+**Scope of `npm run verify`:** Lint covers all 41 Edge Function entrypoints plus `_shared/` and `tests/`. Typecheck and unit tests cover `_shared/` only (Deno HTTPS imports are incompatible with Node-mode `tsc` — see README.md for details).
 
 ## Key Documentation
 

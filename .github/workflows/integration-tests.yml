@@ -1,6 +1,6 @@
 # Integration Tests (Nightly)
 #
-# Runs the 21 integration tests against the live production Supabase instance.
+# Runs the 160 integration tests (19 files) against the live production Supabase instance.
 #
 # REQUIRED REPOSITORY SECRETS (Settings → Secrets and variables → Actions):
 #   SUPABASE_URL             — project URL (e.g. https://your-ref.supabase.co)
@@ -15,9 +15,9 @@
 # MANUAL TRIGGER: Can also be run on demand from the GitHub Actions tab via
 #   workflow_dispatch — useful for post-deploy confidence checks.
 #
-# THESE TESTS ARE NOT PART OF THE PR GATE. The existing verify.yml workflow
-#   covers lint, typecheck, and unit tests on every push and PR. Integration
-#   tests run separately here as a nightly recurring confidence check.
+# Integration tests also run in the PR gate (verify.yml) when repository
+#   secrets are available. This nightly workflow is a separate post-deploy
+#   confidence check that runs unconditionally within operating hours.
 #
 # IF TESTS FAIL, check:
 #   1. Operating hours — did the cron fire outside club hours? Trigger manually.
@@ -42,10 +42,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 18
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
