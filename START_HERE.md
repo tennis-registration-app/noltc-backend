@@ -29,6 +29,14 @@ npm run verify
 
 `npm run verify` runs lint + typecheck + unit tests. CI runs this on every push and pull request to `main`, followed by integration tests when repository secrets are available.
 
+**For complete system verification (requires Supabase credentials):**
+
+```bash
+npm run validate:all
+```
+
+`validate:all` chains `verify` (lint + typecheck + 175 unit tests) with `test:integration` (160 integration tests + response shape contract tests) in one command. Integration and contract tests skip gracefully when env vars are missing (`describe.skipIf`).
+
 - **Lint** covers all 41 Edge Function entrypoints plus `_shared/` and `tests/`.
 - **Typecheck** covers `_shared/` and `tests/` only — Edge Function entrypoints import via HTTPS URLs (`https://deno.land/...`) which are unresolvable by Node-mode `tsc`. This is a known limitation, not a gap in practice.
 - **Unit tests** cover `_shared/` modules (169 tests).
@@ -76,7 +84,8 @@ docs/               # Schema, RLS, endpoint contracts
 | Gate | Command | When it runs |
 |------|---------|-------------|
 | Lint + typecheck + unit tests | `npm run verify` | Every PR (CI), before every commit |
-| Integration tests | `npm run test:integration` | Every PR (when secrets available); nightly at 7 AM Central; manual trigger |
+| Integration tests + contract tests | `npm run test:integration` | Every PR (when secrets available); nightly at 7 AM Central; manual trigger |
+| Complete system verification | `npm run validate:all` | Before releases; installer/setup validation |
 | Post-deploy validation | `node scripts/test-envelope-contracts.js` | After each production deploy |
 
 **Scope of `npm run verify`:** Lint covers all 41 Edge Function entrypoints plus `_shared/` and `tests/`. Typecheck and unit tests cover `_shared/` only (Deno HTTPS imports are incompatible with Node-mode `tsc` — see README.md for details).

@@ -46,6 +46,14 @@ npm run typecheck
 npm run test
 ```
 
+For complete system verification including integration and contract tests (requires Supabase credentials):
+
+```bash
+npm run validate:all
+```
+
+`validate:all` chains `verify` (lint + typecheck + 175 unit tests) with `test:integration` (160 integration tests + response shape contract tests). Tests skip gracefully when env vars are missing.
+
 ### Current scope
 
 The verification gate covers all Edge Function entrypoints (lint) and the shared pure-function modules (lint + typecheck + unit tests).
