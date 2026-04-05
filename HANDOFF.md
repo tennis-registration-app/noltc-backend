@@ -20,7 +20,39 @@ const SKIP_GEOFENCE_CHECK = true;  // ← change to false before production
 
 **Impact:** Any member can register courts remotely. The entire mobile presence enforcement system is inactive.
 
-**Fix:** Change `true` to `false`. Then verify end-to-end in staging: scan QR code on a mobile device, confirm GPS check fires, confirm registration is rejected from outside the club boundary.
+**Fix:** Change `true` to `false`, then complete the on-site validation protocol below before deploying.
+
+#### Geofence Go-Live Validation Protocol
+
+This validation requires physical presence at the club and a deployed (not local) instance of the system.
+
+**Prerequisites — confirm before testing:**
+- Club GPS coordinates are set in `system_settings`: `club_latitude`, `club_longitude`
+- Geofence radius is set in `system_settings`: `geofence_radius_meters` (default 80m — adjust if needed for the club's footprint)
+- The `location_tokens` table is operational (needed for QR flow)
+- At least one kiosk device is registered in the `devices` table with `device_type = 'kiosk'`
+
+**On-site testing checklist (must be done physically at the club):**
+
+1. **GPS allow:** Open the mobile registration app on a phone *at the club*. Attempt to register a court. Confirm it succeeds — the device is within the geofence radius.
+
+2. **GPS deny:** Move outside the club property (more than 80m from the club coordinates). Attempt to register. Confirm the request is denied with a location error message.
+
+3. **QR allow:** Generate a location token (via the admin panel or the `generate-location-token` Edge Function). Scan the QR code on a mobile device. Register a court using the token. Confirm it succeeds.
+
+4. **QR expiry:** Wait for the token to expire (check `validity_minutes` in `system_settings`). Attempt to use the expired token. Confirm it is denied with an expiry error.
+
+5. **QR single-use:** Use a valid token once (confirm success). Immediately attempt to use the same token again. Confirm the second attempt is denied with "Token has already been used".
+
+6. **Kiosk bypass:** Register a court from a kiosk device (`device_type = 'kiosk'`). Confirm it succeeds without any GPS or token requirement — kiosk devices are physically mounted at the club and are exempt from geofence checks by design.
+
+**What to check if validation fails:**
+- Verify `club_latitude`/`club_longitude` in `system_settings` match the actual club GPS coordinates
+- Verify `geofence_radius_meters` is appropriate — 80m may need to be increased for large facilities
+- Check device GPS accuracy — low-accuracy readings can cause false denials; the `accuracy` field in the request is logged in `audit_log` for diagnosis
+- Check Supabase Edge Function logs for `geofence_status: 'failed'` entries in `audit_log` — they include `distance` and `threshold` for debugging
+
+**After validation passes:** Deploy the updated `geofence.ts` with `SKIP_GEOFENCE_CHECK = false`.
 
 ---
 
@@ -54,7 +86,7 @@ The seed data files (`00000000000001_seed_data.sql`, `00000000000002_dev_test_da
 
 ## Sharp Edges for New Developers
 
-### assign-court/index.ts (830 lines) — highest-risk backend file
+### assign-court/index.ts (601 lines) — highest-risk backend file
 
 `supabase/functions/assign-court/index.ts` is the most consequential Edge Function. It handles:
 - Operating hours enforcement
