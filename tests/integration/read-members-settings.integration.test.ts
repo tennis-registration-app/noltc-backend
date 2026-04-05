@@ -157,19 +157,36 @@ describe.skipIf(MISSING_ENV)('read endpoints — members / settings / court-stat
   // the skip from the tests above.
 
   describe('get-court-status', () => {
-    it('returns HTTP 400 because court_availability_view is not deployed [views pending]', async () => {
+    it('returns 200 with ok:true, timestamp, and courts array', async () => {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/get-court-status`, {
         headers: authHeaders(),
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.ok).toBe(false);
-      expect(typeof body.error).toBe('string');
-      expect(body.error).toMatch(/court_availability_view/i);
+      expect(body.ok).toBe(true);
+      expect(typeof body.timestamp).toBe('string');
+      expect(Array.isArray(body.courts)).toBe(true);
+      expect(body.courts.length).toBeGreaterThan(0);
     });
 
-    it.todo('returns 200 with ok:true and courts array [requires court_availability_view deployed]');
-    it.todo('courts array entries have court_id, court_number, status, session, block fields [requires views]');
+    it('courts array entries have court_id, court_number, court_name, status, session, block fields', async () => {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/get-court-status`, {
+        headers: authHeaders(),
+      });
+      const body = await res.json() as any;
+
+      expect(body.ok).toBe(true);
+      expect(body.courts.length).toBeGreaterThan(0);
+      const court = body.courts[0];
+      expect(typeof court.court_id).toBe('string');
+      expect(typeof court.court_number).toBe('number');
+      expect(typeof court.court_name).toBe('string');
+      expect(typeof court.status).toBe('string');
+      expect(['available', 'occupied', 'overtime', 'blocked']).toContain(court.status);
+      // session and block are null when court is available, object otherwise
+      expect(court.session === null || typeof court.session === 'object').toBe(true);
+      expect(court.block === null || typeof court.block === 'object').toBe(true);
+    });
   });
 });
