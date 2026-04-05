@@ -12,7 +12,7 @@ The frontend lives in a separate repo (`NOLTCsignup/`). This repo contains only 
 
 ## Quick Start
 
-**Prerequisites:** Node.js 18+, Supabase CLI (installed via `npm install`), Docker Desktop (required for local Supabase instance).
+**Prerequisites:** Node.js 22+, Supabase CLI (installed via `npm install`), Docker Desktop (required for local Supabase instance).
 
 ```bash
 git clone <repository-url>
@@ -35,7 +35,7 @@ npm run verify
 npm run test:integration
 ```
 
-Runs 21 integration tests against the live deployed Edge Functions. Not part of the PR gate — runs nightly via GitHub Actions and can be triggered manually from the Actions tab.
+Runs 160 integration tests across 19 test files against the live deployed Edge Functions. Not part of the PR gate — runs nightly via GitHub Actions and can be triggered manually from the Actions tab.
 
 **Local development** (requires Docker Desktop):
 
@@ -54,12 +54,12 @@ supabase/
     end-session/
     join-waitlist/
     assign-from-waitlist/
-    ... (44 functions total)
+    ... (41 functions total)
   migrations/       # Database schema and seed data (28 files)
 
 tests/
   unit/             # Unit tests for _shared/ modules (169 tests)
-  integration/      # Integration tests for 4 critical mutation flows (21 tests)
+  integration/      # Integration tests for critical mutation flows (160 tests, 19 files)
 
 scripts/            # Post-deploy validation scripts
 docs/               # Schema, RLS, endpoint contracts
@@ -75,7 +75,7 @@ docs/               # Schema, RLS, endpoint contracts
 | Integration tests | `npm run test:integration` | Nightly (7 AM Central), manual trigger |
 | Post-deploy validation | `node scripts/test-envelope-contracts.js` | After each production deploy |
 
-**Scope of `npm run verify`:** Covers `_shared/` modules and their unit tests only. It does **not** lint or typecheck the 44 individual Edge Function `index.ts` entrypoints. See README.md for details.
+**Scope of `npm run verify`:** Covers `_shared/` modules and their unit tests only. It does **not** lint or typecheck the 41 individual Edge Function `index.ts` entrypoints. See README.md for details.
 
 ## Key Documentation
 
@@ -85,7 +85,7 @@ docs/               # Schema, RLS, endpoint contracts
 | [HANDOFF.md](HANDOFF.md) | Pre-production checklist, sharp edges, integration test requirements |
 | [docs/schema.md](docs/schema.md) | Full database schema reference |
 | [docs/rls.md](docs/rls.md) | Row Level Security policies |
-| [docs/endpoint-contracts.md](docs/endpoint-contracts.md) | API contracts (5 of 44 endpoints documented) |
+| [docs/endpoint-contracts.md](docs/endpoint-contracts.md) | API contracts for all 41 Edge Functions |
 
 ## Pre-Production Checklist
 
@@ -101,13 +101,4 @@ The following must be resolved before the system goes live at the club. All are 
 
 ## Test Coverage
 
-Four of 44 Edge Functions have integration tests:
-
-| Function | Tests |
-|----------|-------|
-| `assign-court` | 6 |
-| `assign-from-waitlist` | 5 |
-| `end-session` | 5 |
-| `join-waitlist` | 5 |
-
-The remaining 40 functions have no automated tests. Before modifying an untested function, follow the protocol in HANDOFF.md: read the function fully → write a test covering the happy path and at least one error path → make the change → run the full test suite.
+19 integration test files covering key Edge Functions (160 tests total). Untested functions have no regression protection — before modifying one, follow the protocol in HANDOFF.md: read the function fully → write a test covering the happy path and at least one error path → make the change → run the full suite.

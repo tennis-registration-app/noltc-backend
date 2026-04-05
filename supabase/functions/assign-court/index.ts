@@ -14,6 +14,7 @@ import {
   fetchBoardState,
   lookupDuration,
   createSessionWithFees,
+  checkOperatingHours,
   corsHeaders,
   addCorsHeaders,
   successResponse,
@@ -113,58 +114,9 @@ serve(async (req) => {
     // CHECK OPERATING HOURS
     // ===========================================
 
-    // Convert current UTC time to Central Time (America/Chicago)
     const now = new Date()
-    const centralTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
-    const dayOfWeek = centralTime.getDay() // 0 = Sunday
-    const hours = centralTime.getHours().toString().padStart(2, '0')
-    const minutes = centralTime.getMinutes().toString().padStart(2, '0')
-    const seconds = centralTime.getSeconds().toString().padStart(2, '0')
-    const currentTime = `${hours}:${minutes}:${seconds}` // HH:MM:SS format
-    const today = centralTime.toISOString().slice(0, 10) // YYYY-MM-DD
-
-    // Check for override first
-    const { data: override } = await supabase
-      .from('operating_hours_overrides')
-      .select('*')
-      .eq('date', today)
-      .single()
-
-    let isOpen = false
-    let opensAt = ''
-    let closesAt = ''
-
-    if (override) {
-      if (override.is_closed) {
-        throw new Error('The club is closed today')
-      }
-      opensAt = override.opens_at
-      closesAt = override.closes_at
-    } else {
-      // Get regular hours
-      const { data: hoursData, error: hoursError } = await supabase
-        .from('operating_hours')
-        .select('*')
-        .eq('day_of_week', dayOfWeek)
-        .single()
-
-      if (hoursError || !hoursData) {
-        throw new Error('Could not determine operating hours')
-      }
-
-      if (hoursData.is_closed) {
-        throw new Error('The club is closed today')
-      }
-      opensAt = hoursData.opens_at
-      closesAt = hoursData.closes_at
-    }
-
-    if (currentTime < opensAt) {
-      throw new Error(`Registration opens at ${opensAt.slice(0, 5)}`)
-    }
-    if (currentTime >= closesAt) {
-      throw new Error(`Registration is closed for today (closed at ${closesAt.slice(0, 5)})`)
-    }
+    const dayOfWeek = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' })).getDay()
+    await checkOperatingHours(supabase, serverNow)
 
     // ===========================================
     // VERIFY COURT EXISTS AND IS ACTIVE

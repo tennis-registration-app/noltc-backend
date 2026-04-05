@@ -102,20 +102,14 @@ It has integration tests (`tests/integration/assign-court.integration.test.ts`).
 
 ---
 
-### 42 of 46 Edge Functions have zero automated tests
+### Integration test coverage
 
-The following functions have integration or unit test coverage:
-- `assign-court` — 6 integration tests
-- `assign-from-waitlist` — 5 integration tests
-- `end-session` — 5 integration tests
-- `join-waitlist` — 5 integration tests
+160 integration tests across 19 test files cover the core mutation flows and most admin/read operations. The four most consequential mutation functions have the deepest coverage: `assign-court` (6), `assign-from-waitlist` (5), `end-session` (5), `join-waitlist` (5). Additional files cover `admin-session-ops`, `admin-court-ops`, `waitlist-ops`, `waitlist-management`, `move-court`, `purchase-balls`, `block-management`, `cancel-block`, `create-block`, `get-board`, `system-ops`, `read-analytics`, `read-members-settings`, `read-blocks-waitlist`, `ai-assistant`.
 
-All other Edge Functions (including `get-board`, `move-court`, `create-block`, `cancel-block`, `mark-wet-courts`, `purchase-balls`, `export-transactions`, all admin functions, and 32 others) have **zero automated test coverage**.
-
-**Protocol for changes to untested functions:**
+Some functions still have no automated coverage. **Protocol for changes to untested functions:**
 1. Read the function fully before touching it
 2. Write an integration test that exercises the happy path and at least one error path before making changes
-3. Run the full test suite after changes: `deno test --allow-all tests/`
+3. Run the full test suite: `npm run test:integration`
 
 This is not optional — untested functions have no regression protection.
 
@@ -152,7 +146,7 @@ Tests require a live local Supabase instance:
 
 ```bash
 npx supabase start       # start local DB + Edge Functions
-deno test --allow-all tests/integration/  # run integration tests
+npm run test:integration  # run integration tests
 npx supabase stop        # stop when done
 ```
 

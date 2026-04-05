@@ -9,6 +9,7 @@ import {
   errorResponse,
   conflictResponse,
   internalErrorResponse,
+  checkOperatingHours,
 } from "../_shared/index.ts"
 
 interface Participant {
@@ -90,56 +91,8 @@ serve(async (req) => {
     // CHECK OPERATING HOURS
     // ===========================================
 
-    // Convert current UTC time to Central Time (America/Chicago)
     const now = new Date()
-    const centralTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
-    const dayOfWeek = centralTime.getDay() // 0 = Sunday
-    const hours = centralTime.getHours().toString().padStart(2, '0')
-    const minutes = centralTime.getMinutes().toString().padStart(2, '0')
-    const seconds = centralTime.getSeconds().toString().padStart(2, '0')
-    const currentTime = `${hours}:${minutes}:${seconds}` // HH:MM:SS format
-    const today = centralTime.toISOString().slice(0, 10) // YYYY-MM-DD
-
-    // Check for override first
-    const { data: override } = await supabase
-      .from('operating_hours_overrides')
-      .select('*')
-      .eq('date', today)
-      .single()
-
-    let opensAt = ''
-    let closesAt = ''
-
-    if (override) {
-      if (override.is_closed) {
-        return addCorsHeaders(errorResponse('CLUB_CLOSED', 'The club is closed today', serverNow, 400))
-      }
-      opensAt = override.opens_at
-      closesAt = override.closes_at
-    } else {
-      const { data: hoursData, error: hoursError } = await supabase
-        .from('operating_hours')
-        .select('*')
-        .eq('day_of_week', dayOfWeek)
-        .single()
-
-      if (hoursError || !hoursData) {
-        return addCorsHeaders(internalErrorResponse('Could not determine operating hours', serverNow))
-      }
-
-      if (hoursData.is_closed) {
-        return addCorsHeaders(errorResponse('CLUB_CLOSED', 'The club is closed today', serverNow, 400))
-      }
-      opensAt = hoursData.opens_at
-      closesAt = hoursData.closes_at
-    }
-
-    if (currentTime < opensAt) {
-      return addCorsHeaders(errorResponse('OUTSIDE_HOURS', `Registration opens at ${opensAt.slice(0, 5)}`, serverNow, 400))
-    }
-    if (currentTime >= closesAt) {
-      return addCorsHeaders(errorResponse('OUTSIDE_HOURS', `Registration is closed for today (closed at ${closesAt.slice(0, 5)})`, serverNow, 400))
-    }
+    await checkOperatingHours(supabase, serverNow)
 
     // ===========================================
     // VERIFY DEVICE EXISTS

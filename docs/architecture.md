@@ -14,7 +14,7 @@ This is a **single-tenant, single-club system**. It was designed for one private
 
 ## Why Edge Functions, Not a REST API Framework
 
-All 44 backend operations are implemented as Supabase Edge Functions — individual Deno/TypeScript functions deployed to Supabase's edge runtime, co-located with the database.
+All 41 backend operations are implemented as Supabase Edge Functions — individual Deno/TypeScript functions deployed to Supabase's edge runtime, co-located with the database.
 
 **Why this over a traditional REST API (Express, Fastify, etc.):**
 
@@ -45,7 +45,8 @@ Shared helpers live in `supabase/functions/_shared/`. This directory uses the un
 | `deviceLookup.ts` | `verifyDevice` | assign-court, assign-from-waitlist |
 | `boardFetch.ts` | `fetchBoardState` | assign-court, assign-from-waitlist |
 | `geofenceCheck.ts` | `enforceGeofence` | assign-court, assign-from-waitlist |
-| `courtAssignment.ts` | `lookupDuration`, `processGuestFees`, `processBallPurchase` | assign-court, assign-from-waitlist |
+| `courtAssignment.ts` | `lookupDuration`, `createSessionWithFees` | assign-court, assign-from-waitlist |
+| `operatingHours.ts` | `checkOperatingHours` | assign-court, join-waitlist |
 | `cors.ts` | `corsHeaders`, `addCorsHeaders` | All functions |
 
 ---
@@ -133,7 +134,7 @@ The baseline schema was split into 10 files (prefixed `00000000000000` through `
 
 **Unit tests** (`tests/unit/`) test pure functions in `_shared/` with a mocked Supabase client. There are 169 tests across 6 modules. These run in milliseconds and are part of the PR gate (`npm run verify`).
 
-**Integration tests** (`tests/integration/`) make real HTTP calls against the live deployed Edge Functions and verify both the HTTP response shape and resulting database state. There are 21 tests across 4 functions. Key conventions:
+**Integration tests** (`tests/integration/`) make real HTTP calls against the live deployed Edge Functions and verify both the HTTP response shape and resulting database state. There are 160 tests across 19 test files. Key conventions:
 
 - All test fixtures use UUIDs in the `d0000000-*` namespace to avoid collisions with real data.
 - Tests run sequentially (`fileParallelism: false` in `vitest.integration.config.ts`) to prevent shared-state contamination between tests.
@@ -149,4 +150,6 @@ These items were identified during development and have since been resolved:
 - **`join-waitlist` response envelope** — migrated to `_shared/response.ts` with proper HTTP 400/409 status codes. Integration tests updated to match.
 - **Guest fee and ball purchase atomicity** — session creation, participant insertion, fee transactions, and waitlist update are now wrapped in the `create_session_with_fees` PostgreSQL RPC (single `SECURITY DEFINER` transaction). A failure at any step rolls back the entire operation.
 - **Development-era logging** — debug `console.log` calls with emoji markers removed from all Edge Functions.
-- **Endpoint documentation** — all 44 Edge Functions documented in `docs/endpoint-contracts.md` (method, auth, request/response shapes, error codes).
+- **Endpoint documentation** — all 41 Edge Functions documented in `docs/endpoint-contracts.md` (method, auth, request/response shapes, error codes).
+- **Operating hours duplication** — extracted to `_shared/operatingHours.ts`; `assign-court` and `join-waitlist` both import `checkOperatingHours()`.
+- **Debug/dev Edge Functions removed** — `debug-query`, `debug-constraints`, and `fix-session` deleted and undeployed.

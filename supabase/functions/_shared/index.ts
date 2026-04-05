@@ -12,3 +12,4 @@ export * from './boardFetch.ts';
 export * from './geofenceCheck.ts';
 export * from './courtAssignment.ts';
 export * from './cors.ts';
+export * from './operatingHours.ts';

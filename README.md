@@ -48,7 +48,7 @@ npm run test
 
 ### Current scope
 
-The verification gate covers the **shared pure-function modules** and their mock-based tests. It does **not** cover the 46 individual Edge Function `index.ts` entrypoints.
+The verification gate covers the **shared pure-function modules** and their mock-based tests. It does **not** cover the 41 Edge Function `index.ts` entrypoints.
 
 Covered modules:
 
@@ -87,7 +87,7 @@ npm run test:integration
 
 ### Coverage
 
-21 tests across 4 critical Edge Function entrypoints:
+160 tests across 19 test files covering the critical mutation and admin flows. The four core mutation functions have the deepest coverage:
 
 | Test file | Tests | Notes |
 |---|---|---|
@@ -95,6 +95,8 @@ npm run test:integration
 | `join-waitlist` | 5 | Singles and doubles happy paths; validation error cases |
 | `assign-court` | 6 | Singles and doubles happy paths with DB verification; occupied court, blocked court, missing fields |
 | `assign-from-waitlist` | 5 | Singles and doubles happy paths with DB verification; occupied court, missing waitlist entry, missing fields |
+
+Additional test files cover: `admin-session-ops`, `admin-court-ops`, `waitlist-ops`, `waitlist-management`, `move-court`, `purchase-balls`, `block-management`, `cancel-block`, `create-block`, `get-board`, `system-ops`, `read-analytics`, `read-members-settings`, `read-blocks-waitlist`, `ai-assistant`.
 
 ### Requirements
 
@@ -194,10 +196,6 @@ supabase db push
 ### Migration file conventions
 
 Migration files use one-function-per-file pattern and post-body `LANGUAGE` placement to work around Supabase CLI statement splitter limitations. Do not combine multiple `$$...$$`-quoted function bodies in a single migration file.
-
-### `join-waitlist` uses a non-standard response envelope
-
-`join-waitlist` does not use the shared helpers from `_shared/response.ts`. It returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper rather than `errorResponse()` / `internalErrorResponse()`. This deviation is documented in the integration test comments. The integration tests assert against the actual production wire format, not the shape implied by the shared helpers.
 
 ## Recent fixes
 
