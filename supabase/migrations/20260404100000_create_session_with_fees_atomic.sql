@@ -1,7 +1,12 @@
 -- Migration: create_session_with_fees atomic RPC
--- Wraps session creation, participant insertion, and transaction creation
--- (guest fees, ball purchase) in a single DB transaction.
+-- Wraps session creation, participant insertion, transaction creation
+-- (guest fees, ball purchase), and optional waitlist update in a single
+-- DB transaction.
 -- Called by assign-court and assign-from-waitlist Edge Functions.
+--
+-- v2: adds p_waitlist_id / p_waitlist_position optional parameters so
+--     assign-from-waitlist can atomically mark the entry as assigned and
+--     compact the position sequence in the same transaction.
 
 CREATE OR REPLACE FUNCTION create_session_with_fees(
   p_session_id              UUID,
@@ -25,7 +30,12 @@ CREATE OR REPLACE FUNCTION create_session_with_fees(
   -- Full can price resolved by caller from system_settings.
   -- Ignored when p_add_balls is false.
   p_ball_price_cents        INTEGER,
-  p_split_balls             BOOLEAN
+  p_split_balls             BOOLEAN,
+  -- Optional: assign-from-waitlist path only.
+  -- If provided, marks the waitlist entry as assigned and compacts positions.
+  -- assign-court passes NULL for both (DEFAULT NULL = no-op).
+  p_waitlist_id             UUID    DEFAULT NULL,
+  p_waitlist_position       INTEGER DEFAULT NULL
 )
 RETURNS JSONB
 AS $$
@@ -187,7 +197,31 @@ BEGIN
   END IF;
 
   -- =========================================================
-  -- 5. RETURN session_id and all inserted transaction IDs.
+  -- 5. UPDATE WAITLIST ENTRY (assign-from-waitlist path only)
+  --    Skipped entirely when p_waitlist_id IS NULL (assign-court path).
+  -- =========================================================
+  IF p_waitlist_id IS NOT NULL THEN
+
+    UPDATE waitlist
+    SET
+      status              = 'assigned',
+      assigned_at         = NOW(),
+      assigned_session_id = v_session_id
+    WHERE id = p_waitlist_id;
+
+    -- Compact positions: single UPDATE replaces the N-round-trip loop
+    -- that the Edge Function previously used.
+    IF p_waitlist_position IS NOT NULL THEN
+      UPDATE waitlist
+      SET position = position - 1
+      WHERE status   = 'waiting'
+        AND position > p_waitlist_position;
+    END IF;
+
+  END IF;
+
+  -- =========================================================
+  -- 6. RETURN session_id and all inserted transaction IDs.
   --    Any unhandled exception propagates, rolling back the
   --    entire transaction automatically.
   -- =========================================================
@@ -201,5 +235,6 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ALTER FUNCTION create_session_with_fees(
   UUID, UUID, TEXT, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, UUID, TEXT, UUID,
-  JSONB, INTEGER, BOOLEAN, INTEGER, BOOLEAN
+  JSONB, INTEGER, BOOLEAN, INTEGER, BOOLEAN,
+  UUID, INTEGER
 ) SET search_path = public, pg_temp;

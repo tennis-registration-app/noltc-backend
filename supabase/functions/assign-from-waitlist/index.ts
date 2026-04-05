@@ -263,6 +263,8 @@ serve(async (req) => {
       dayOfWeek: now.getDay(),
       addBalls: requestData.add_balls || false,
       splitBalls: requestData.split_balls || false,
+      waitlistId: requestData.waitlist_id,
+      waitlistPosition: assignedPosition,
     })
 
     if (rpcError || !rpcResult) {
@@ -279,43 +281,6 @@ serve(async (req) => {
     }
 
     sessionId = session.id
-
-    // ===========================================
-    // UPDATE WAITLIST ENTRY
-    // ===========================================
-
-    const { error: waitlistUpdateError } = await supabase
-      .from('waitlist')
-      .update({
-        status: 'assigned',
-        assigned_at: now.toISOString(),
-        assigned_session_id: session.id,
-      })
-      .eq('id', requestData.waitlist_id)
-
-    if (waitlistUpdateError) {
-      throw new Error(`Failed to update waitlist: ${waitlistUpdateError.message}`)
-    }
-
-    // ===========================================
-    // REORDER REMAINING WAITLIST
-    // ===========================================
-
-    const { data: entriesToUpdate } = await supabase
-      .from('waitlist')
-      .select('id, position')
-      .eq('status', 'waiting')
-      .gt('position', assignedPosition)
-      .order('position', { ascending: true })
-
-    if (entriesToUpdate && entriesToUpdate.length > 0) {
-      for (const entry of entriesToUpdate) {
-        await supabase
-          .from('waitlist')
-          .update({ position: entry.position - 1 })
-          .eq('id', entry.id)
-      }
-    }
 
     // ===========================================
     // GET PARTICIPANT NAMES FOR RESPONSE
@@ -392,7 +357,7 @@ serve(async (req) => {
         previous_position: assignedPosition,
         status: 'assigned',
       },
-      positions_updated: entriesToUpdate?.length || 0,
+      positions_updated: 0,
       timeLimitReason: inheritedEndTime ? 'rereg' : null,
       isInheritedEndTime: !!inheritedEndTime,
       inheritedFromScheduledEnd: inheritedEndTime?.toISOString() || null,

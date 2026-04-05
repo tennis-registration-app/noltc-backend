@@ -187,6 +187,11 @@ export interface CreateSessionOptions {
   dayOfWeek: number        // 0=Sun–6=Sat; used to resolve weekday/weekend guest fee rate
   addBalls: boolean
   splitBalls: boolean
+  // Optional: assign-from-waitlist path only.
+  // If provided, the RPC atomically marks the waitlist entry as assigned
+  // and compacts the position sequence for remaining waiting entries.
+  waitlistId?: string
+  waitlistPosition?: number
 }
 
 export interface CreateSessionResult {
@@ -247,5 +252,7 @@ export async function createSessionWithFees(
     p_add_balls:               options.addBalls,
     p_ball_price_cents:        ballPriceCents,
     p_split_balls:             options.splitBalls,
+    p_waitlist_id:             options.waitlistId ?? null,
+    p_waitlist_position:       options.waitlistPosition ?? null,
   })
 }
