@@ -219,7 +219,6 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
   });
 
   it('returns ok: false with code INVALID_GROUP_TYPE for an unrecognized group_type', async () => {
-    // join-waitlist uses HTTP 200 for all denials (business-rule failures)
     const res = await callJoinWaitlist({
       group_type: 'invalid',
       participants: [],
@@ -227,7 +226,7 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('INVALID_GROUP_TYPE');
@@ -242,7 +241,7 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('NO_PARTICIPANTS');
@@ -258,7 +257,7 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('NO_PARTICIPANTS');
