@@ -142,14 +142,11 @@ The baseline schema was split into 10 files (prefixed `00000000000000` through `
 
 ---
 
-## Known Architectural Debt
+## Resolved Architectural Debt
 
-These are real limitations, documented for transparency:
+These items were identified during development and have since been resolved:
 
-- **`join-waitlist` non-standard response envelope.** This function does not use `_shared/response.ts`. It returns HTTP 200 for all responses including validation failures, using its own internal `denialResponse()` helper. This is intentional and documented. The integration tests assert against the actual wire format.
-
-- **Guest fees and ball purchases are not transactional.** In `assign-court` and `assign-from-waitlist`, session creation and fee insertion are separate database operations. A failure in `processGuestFees()` or `processBallPurchase()` after a successful session insert will leave the session created but the fee unrecorded. The probability is low; the consequence is an accounting discrepancy requiring manual reconciliation.
-
-- **Development-era logging.** Most Edge Functions contain `console.log` and `console.error` calls with emoji markers and verbose state dumps, left over from the development period. These appear in Supabase function logs and create noise when diagnosing real errors. `assign-court` was cleaned up during the April 2026 refactor; the remaining 43 functions were not.
-
-- **Endpoint documentation is incomplete.** `docs/endpoint-contracts.md` documents 5 of 44 Edge Function endpoints. The undocumented functions can be understood from their source and integration tests where coverage exists.
+- **`join-waitlist` response envelope** — migrated to `_shared/response.ts` with proper HTTP 400/409 status codes. Integration tests updated to match.
+- **Guest fee and ball purchase atomicity** — session creation, participant insertion, fee transactions, and waitlist update are now wrapped in the `create_session_with_fees` PostgreSQL RPC (single `SECURITY DEFINER` transaction). A failure at any step rolls back the entire operation.
+- **Development-era logging** — debug `console.log` calls with emoji markers removed from all Edge Functions.
+- **Endpoint documentation** — all 44 Edge Functions documented in `docs/endpoint-contracts.md` (method, auth, request/response shapes, error codes).

@@ -140,15 +140,9 @@ Use the shared helpers consistently. `assign-court` does its own inline validati
 
 ---
 
-### Console logging volume
-
-Edge Functions contain approximately 74 `console.log` and 80 `console.error` calls, many with development-era emoji markers (`🔍`, `⚠️`) and raw timing data. These appear in Supabase function logs. For a club system this is low risk, but it creates noise when diagnosing real errors. Clean up development-era logging before scaling or adding monitoring.
-
----
-
 ### join-waitlist response envelope
 
-`join-waitlist` does not use the shared `response.ts` helpers. It returns HTTP 200 for all responses including validation failures, using an internal `denialResponse()` helper. This deviation is intentional and documented in the integration test comments. The integration tests assert against the actual production wire format.
+`join-waitlist` uses the shared `response.ts` helpers and returns proper HTTP 400/409 status codes for validation failures. Integration tests assert against this wire format.
 
 ---
 
