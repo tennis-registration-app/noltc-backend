@@ -23,6 +23,14 @@ import {
   internalErrorResponse,
 } from "../_shared/index.ts"
 
+// Business-logic denials that should surface their specific code to the frontend.
+class DenialError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message)
+    this.name = 'DenialError'
+  }
+}
+
 interface Participant {
   type: 'member' | 'guest'
   member_id?: string
@@ -129,10 +137,10 @@ serve(async (req) => {
       .single()
 
     if (courtError || !court) {
-      throw new Error('Court not found')
+      throw new DenialError('COURT_NOT_FOUND', 'Court not found')
     }
     if (!court.is_active) {
-      throw new Error('Court is not active')
+      throw new DenialError('COURT_NOT_FOUND', 'Court is not active')
     }
 
     // Singles-only court restriction
@@ -237,7 +245,7 @@ serve(async (req) => {
           }
         }
       } else {
-        throw new Error('Court is currently occupied')
+        throw new DenialError('COURT_OCCUPIED', 'Court is currently occupied')
       }
     }
 
@@ -249,10 +257,10 @@ serve(async (req) => {
       .is('cancelled_at', null)
       .lte('starts_at', now.toISOString())
       .gt('ends_at', now.toISOString())
-      .single()
+      .maybeSingle()
 
     if (activeBlock) {
-      throw new Error(`Court is blocked: ${activeBlock.title}`)
+      throw new DenialError('COURT_BLOCKED', `Court is blocked: ${activeBlock.title}`)
     }
 
     // ===========================================
@@ -300,17 +308,17 @@ serve(async (req) => {
 
       // Check for members already on waitlist
       const { data: waitlistPlayers, error: waitlistError } = await supabase
-        .from('waitlist_participants')
+        .from('waitlist_members')
         .select(`
           member_id,
-          waitlist_entry:waitlist_entries!inner(id, status),
+          waitlist:waitlist!inner(id, status),
           members(display_name)
         `)
         .in('member_id', memberIds)
-        .eq('waitlist_entry.status', 'waiting')
+        .eq('waitlist.status', 'waiting')
 
       if (waitlistError) {
-        console.error('Error checking waitlist:', waitlistError)
+        throw new Error(`Failed to check waitlist: ${waitlistError.message}`)
       }
 
       if (waitlistPlayers && waitlistPlayers.length > 0) {
@@ -319,7 +327,7 @@ serve(async (req) => {
 
         return addCorsHeaders(
           conflictResponse(
-            'MEMBER_ALREADY_ON_WAITLIST',
+            'MEMBER_ON_WAITLIST',
             `${memberName} is already on the waitlist`,
             serverNow
           )
@@ -516,9 +524,16 @@ serve(async (req) => {
       })
 
     console.error('Unexpected error in assign-court:', error)
-    return addCorsHeaders(
-      internalErrorResponse(error.message, serverNow)
-    )
+    const code = error instanceof DenialError ? error.code : 'INTERNAL_ERROR'
+    return new Response(JSON.stringify({
+      ok: false,
+      serverNow,
+      code,
+      message: error.message,
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
   }
 })
 

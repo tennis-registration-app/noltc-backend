@@ -165,7 +165,7 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
     expect(participants).toHaveLength(2);
   });
 
-  it('returns 500 internal_error with Court is currently occupied when court has an active session', async () => {
+  it('returns ok: false with code COURT_OCCUPIED when court has an active session', async () => {
     const courtId = courts[0].id;
     const now = new Date();
     const startedAt = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
@@ -204,15 +204,15 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.code).toBe('internal_error');
+    expect(body.code).toBe('COURT_OCCUPIED');
     expect(body.message).toContain('occupied');
     expect(typeof body.serverNow).toBe('string');
   });
 
-  it('returns 500 internal_error with Court is blocked when court has an active block', async () => {
+  it('returns ok: false with code COURT_BLOCKED when court has an active block', async () => {
     const courtId = courts[0].id;
     const now = new Date();
     const startsAt = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
@@ -243,15 +243,15 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.code).toBe('internal_error');
+    expect(body.code).toBe('COURT_BLOCKED');
     expect(body.message).toContain('blocked');
     expect(typeof body.serverNow).toBe('string');
   });
 
-  it('returns 500 internal_error with Court not found for a non-existent court_id', async () => {
+  it('returns ok: false with code COURT_NOT_FOUND for a non-existent court_id', async () => {
     const res = await callAssignCourt({
       court_id: '00000000-0000-0000-0000-000000000000',
       session_type: 'singles',
@@ -260,15 +260,15 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.code).toBe('internal_error');
+    expect(body.code).toBe('COURT_NOT_FOUND');
     expect(body.message).toContain('Court not found');
     expect(typeof body.serverNow).toBe('string');
   });
 
-  it('returns 500 internal_error with At least one participant is required when participants is empty', async () => {
+  it('returns ok: false with code INTERNAL_ERROR when participants is empty', async () => {
     const courtId = courts[0].id;
 
     const res = await callAssignCourt({
@@ -279,10 +279,10 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.code).toBe('internal_error');
+    expect(body.code).toBe('INTERNAL_ERROR');
     expect(body.message).toContain('At least one participant is required');
     expect(typeof body.serverNow).toBe('string');
   });
