@@ -85,43 +85,46 @@ serve(async (req) => {
     // ===========================================
 
     if (requestData.idempotency_key) {
-      // Check if a transaction with this idempotency key already exists
-      const { data: existingTx, error: existingError } = await supabase
+      // Match both the plain key (single purchase) and split variants
+      // (${key}-split-0, ${key}-split-1, …) so retried split purchases
+      // are caught even though the RPC stores per-player keys.
+      const key = requestData.idempotency_key
+      const { data: existingTxs } = await supabase
         .from('transactions')
         .select('id, account_id, amount_cents, description')
-        .eq('idempotency_key', requestData.idempotency_key)
-        .maybeSingle()
+        .or(`idempotency_key.eq.${key},idempotency_key.like.${key}-split-%`)
 
-      if (existingTx) {
+      if (existingTxs && existingTxs.length > 0) {
         // Return cached result - don't charge again
         await supabase.from('audit_log').insert({
           action: 'ball_purchase_idempotent',
           entity_type: 'transaction',
-          entity_id: existingTx.id,
+          entity_id: existingTxs[0].id,
           device_id: requestData.device_id,
           device_type: device.device_type,
           initiated_by: 'user',
           request_data: {
-            idempotency_key: requestData.idempotency_key,
-            cached_transaction_id: existingTx.id,
+            idempotency_key: key,
+            cached_transaction_ids: existingTxs.map(t => t.id),
           },
           outcome: 'success',
           ip_address: req.headers.get('x-forwarded-for') || 'unknown',
           created_at: serverNow,
         })
 
+        const total_cents = existingTxs.reduce((sum, t) => sum + t.amount_cents, 0)
         return new Response(JSON.stringify({
           ok: true,
           serverNow,
           idempotent: true,
-          transactions: [{
-            id: existingTx.id,
-            account_id: existingTx.account_id,
-            amount_cents: existingTx.amount_cents,
-            amount_dollars: (existingTx.amount_cents / 100).toFixed(2),
-            description: existingTx.description,
-          }],
-          total_cents: existingTx.amount_cents,
+          transactions: existingTxs.map(t => ({
+            id: t.id,
+            account_id: t.account_id,
+            amount_cents: t.amount_cents,
+            amount_dollars: (t.amount_cents / 100).toFixed(2),
+            description: t.description,
+          })),
+          total_cents,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200,

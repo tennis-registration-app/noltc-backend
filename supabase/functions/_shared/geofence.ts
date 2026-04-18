@@ -155,8 +155,9 @@ export async function validateLocationToken(
     }
   }
 
-  // Mark token as used
-  const { error: updateError } = await supabase
+  // Mark token as used. .select() lets us detect the 0-row case where a
+  // concurrent request consumed the token between our read and this update.
+  const { data: updatedRows, error: updateError } = await supabase
     .from('location_tokens')
     .update({
       used_at: now.toISOString(),
@@ -165,12 +166,13 @@ export async function validateLocationToken(
     })
     .eq('id', tokenRow.id)
     .is('used_at', null) // Ensure not already used (race condition protection)
+    .select('id')
 
-  if (updateError) {
+  if (updateError || !updatedRows || updatedRows.length === 0) {
     return {
       isValid: false,
       tokenId: tokenRow.id,
-      message: 'Failed to validate token',
+      message: 'Token has already been used',
     }
   }
 
