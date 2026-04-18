@@ -24,7 +24,8 @@ const PRE_INSERTED_SESSION_ID = 'd0000000-0000-0000-0000-000000004001';
 
 // NOTE: This function does NOT use the shared response helpers.
 // All responses — success and error — return HTTP 200.
-// Error shape: { ok: false, code: 'INTERNAL_ERROR', message: string, serverNow: string }
+// Error shape: { ok: false, code: string, message: string, serverNow: string }
+// code is 'COURT_OCCUPIED' | 'COURT_BLOCKED' for business denials, 'INTERNAL_ERROR' otherwise
 // Success shape: { ok: true, serverNow, session: {...}, waitlist: {...}, positions_updated, board }
 
 describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)', () => {
@@ -246,7 +247,7 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
     expect(typeof body.serverNow).toBe('string');
   });
 
-  it('returns ok: false with code INTERNAL_ERROR when the target court is currently occupied', async () => {
+  it('returns ok: false with code COURT_OCCUPIED when the target court is currently occupied', async () => {
     const courtId = courts[2].id;
     const now = new Date();
     const startedAt = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
@@ -291,7 +292,7 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
-    expect(body.code).toBe('INTERNAL_ERROR');
+    expect(body.code).toBe('COURT_OCCUPIED');
     expect(body.message).toContain('occupied');
     expect(typeof body.serverNow).toBe('string');
   });
