@@ -41,8 +41,10 @@ describe('validateLocationToken', () => {
     findData?: Record<string, unknown> | null;
     findError?: { message: string } | null;
     updateError?: { message: string } | null;
+    updateRows?: Array<{ id: string }> | null; // null = 0 rows updated
   }) {
-    const updateResult = { error: opts.updateError ?? null };
+    const updatedRows = opts.updateRows !== undefined ? opts.updateRows : [{ id: (opts.findData as any)?.id ?? 'tok' }];
+    const updateResult = { data: opts.updateError ? null : updatedRows, error: opts.updateError ?? null };
     const findResult = { data: opts.findData ?? null, error: opts.findError ?? null };
 
     return {
@@ -54,7 +56,9 @@ describe('validateLocationToken', () => {
         }),
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            is: vi.fn().mockResolvedValue(updateResult),
+            is: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue(updateResult),
+            }),
           }),
         }),
       }),
@@ -158,7 +162,22 @@ describe('validateLocationToken', () => {
       const result = await validateLocationToken(sb, VALID_TOKEN, MEMBER_ID, DEVICE_ID);
       expect(result.isValid).toBe(false);
       expect(result.tokenId).toBe('tok-3');
-      expect(result.message).toBe('Failed to validate token');
+      expect(result.message).toBe('Token has already been used');
+    });
+
+    it('returns failure when update affects 0 rows (concurrent consumption)', async () => {
+      const sb = mockSupabase({
+        findData: {
+          id: 'tok-5',
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+          used_at: null,
+        },
+        updateRows: [], // 0 rows — another request consumed the token first
+      });
+      const result = await validateLocationToken(sb, VALID_TOKEN, MEMBER_ID, DEVICE_ID);
+      expect(result.isValid).toBe(false);
+      expect(result.tokenId).toBe('tok-5');
+      expect(result.message).toBe('Token has already been used');
     });
 
     it('returns success for valid unused non-expired token', async () => {
