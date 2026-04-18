@@ -72,22 +72,21 @@ EXCEPTION
   WHEN unique_violation THEN
     -- A retry reached the RPC despite the edge function pre-check.
     -- Return the already-inserted rows so the caller gets a clean result.
-    SELECT jsonb_build_object(
-      'success', true,
-      'transactions', jsonb_agg(
-        jsonb_build_object(
-          'id', t.id,
-          'account_id', t.account_id,
-          'amount_cents', t.amount_cents,
-          'description', t.description
-        )
+    RETURN (
+      SELECT jsonb_build_object(
+        'success', true,
+        'transactions', COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'id', t.id,
+            'account_id', t.account_id,
+            'amount_cents', t.amount_cents,
+            'description', t.description
+          )
+        ), '[]'::jsonb)
       )
-    )
-    INTO v_results
-    FROM transactions t
-    WHERE t.idempotency_key LIKE p_idempotency_base || '-split-%';
-
-    RETURN v_results;
+      FROM transactions t
+      WHERE t.idempotency_key LIKE p_idempotency_base || '-split-%'
+    );
 
   WHEN OTHERS THEN
     RETURN jsonb_build_object(
