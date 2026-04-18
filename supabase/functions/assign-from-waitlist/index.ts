@@ -8,6 +8,14 @@ import { verifyDevice } from "../_shared/deviceLookup.ts"
 import { fetchBoardState } from "../_shared/boardFetch.ts"
 import { corsHeaders, successResponse, addCorsHeaders } from "../_shared/index.ts"
 
+// Business-logic denials that should surface their specific code to the frontend.
+class DenialError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message)
+    this.name = 'DenialError'
+  }
+}
+
 interface AssignFromWaitlistRequest {
   waitlist_id: string
   court_id: string
@@ -150,12 +158,16 @@ serve(async (req) => {
 
     // Check for active session
     const now = new Date()
-    const { data: activeSession } = await supabase
+    const { data: activeSession, error: activeSessionError } = await supabase
       .from('sessions')
       .select('id, scheduled_end_at')
       .eq('court_id', requestData.court_id)
       .is('actual_end_at', null)
-      .single()
+      .maybeSingle()
+
+    if (activeSessionError) {
+      throw new Error(`Failed to check court availability: ${activeSessionError.message}`)
+    }
 
     if (activeSession) {
       // Check if session is in overtime (scheduled_end_at is in the past)
@@ -178,7 +190,7 @@ serve(async (req) => {
           console.error(`Failed to end displaced session ${activeSession.id}:`, endResult.error)
         }
       } else {
-        throw new Error('Court is currently occupied')
+        throw new DenialError('COURT_OCCUPIED', 'Court is currently occupied')
       }
     }
 
@@ -190,10 +202,10 @@ serve(async (req) => {
       .is('cancelled_at', null)
       .lte('starts_at', now.toISOString())
       .gt('ends_at', now.toISOString())
-      .single()
+      .maybeSingle()
 
     if (activeBlock) {
-      throw new Error(`Court is blocked: ${activeBlock.title}`)
+      throw new DenialError('COURT_BLOCKED', `Court is blocked: ${activeBlock.title}`)
     }
 
     // ===========================================
@@ -378,10 +390,11 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || 'unknown',
       })
 
+    const code = error instanceof DenialError ? error.code : 'INTERNAL_ERROR'
     return new Response(JSON.stringify({
       ok: false,
       serverNow,
-      code: 'INTERNAL_ERROR',
+      code,
       message: error.message,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
