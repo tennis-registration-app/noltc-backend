@@ -141,7 +141,7 @@ function validateToolArgs(toolName: string, args: Record<string, unknown>): { ok
       args.court_number = courtNum;
 
       // Validate and normalize block_type (case-insensitive)
-      const VALID_BLOCK_TYPES = ['lesson', 'clinic', 'maintenance', 'wet', 'other'];
+      const VALID_BLOCK_TYPES = ['lesson', 'clinic', 'maintenance', 'wet', 'league', 'other'];
       if (!args.block_type || typeof args.block_type !== 'string') {
         return { ok: false, error: 'create_block requires block_type' };
       }
