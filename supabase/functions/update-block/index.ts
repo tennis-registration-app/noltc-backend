@@ -10,7 +10,7 @@ const corsHeaders = {
 interface UpdateBlockRequest {
   block_id: string
   court_id?: string
-  block_type?: 'lesson' | 'clinic' | 'maintenance' | 'wet' | 'other'
+  block_type?: 'lesson' | 'clinic' | 'maintenance' | 'wet' | 'league' | 'other'
   title?: string
   starts_at?: string  // ISO datetime
   ends_at?: string    // ISO datetime
@@ -130,8 +130,8 @@ serve(async (req) => {
     }
 
     // Validate block_type if provided
-    if (requestData.block_type && !['lesson', 'clinic', 'maintenance', 'wet', 'other'].includes(requestData.block_type)) {
-      return denialResponse('INVALID_BLOCK_TYPE', 'block_type must be "lesson", "clinic", "maintenance", "wet", or "other"', serverNow)
+    if (requestData.block_type && !['lesson', 'clinic', 'maintenance', 'wet', 'league', 'other'].includes(requestData.block_type)) {
+      return denialResponse('INVALID_BLOCK_TYPE', 'block_type must be "lesson", "clinic", "maintenance", "wet", "league", or "other"', serverNow)
     }
 
     // ===========================================
