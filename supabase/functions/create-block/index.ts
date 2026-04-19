@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { signalBoardChange } from "../_shared/sessionLifecycle.ts"
+import { endSession, signalBoardChange } from "../_shared/sessionLifecycle.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -256,20 +256,21 @@ serve(async (req) => {
         .select('id')
         .eq('court_id', requestData.court_id)
         .is('actual_end_at', null)
-        .single()
+        .maybeSingle()
 
       if (activeSession) {
-        // End the active session
-        const { error: endError } = await supabase
-          .from('sessions')
-          .update({
-            actual_end_at: serverNow,
-            end_reason: 'admin_override',
-          })
-          .eq('id', activeSession.id)
+        // End via shared helper so session_events gets the END row alongside
+        // the actual_end_at cache update (single source of truth).
+        const endResult = await endSession(supabase, {
+          sessionId: activeSession.id,
+          serverNow,
+          endReason: 'admin_override',
+          deviceId: requestData.device_id,
+          eventData: { trigger: 'block_created', court_id: requestData.court_id },
+        })
 
-        if (endError) {
-          console.error('Failed to end session for block:', endError)
+        if (!endResult.success && !endResult.alreadyEnded) {
+          console.error('Failed to end session for block:', endResult.error)
           return internalErrorResponse('Failed to end active session', serverNow)
         }
 

@@ -181,63 +181,42 @@ serve(async (req) => {
     }
 
     // ===========================================
-    // GET NEXT POSITION
+    // CREATE WAITLIST ENTRY + MEMBERS (ATOMIC RPC)
     // ===========================================
+    //
+    // The RPC assigns the next position, inserts the waitlist row, and
+    // inserts all waitlist_members in a single transaction. An advisory
+    // lock inside the RPC serializes concurrent position assignments so
+    // two requests can't race into the same position.
 
-    const { data: lastEntry } = await supabase
-      .from('waitlist')
-      .select('position')
-      .eq('status', 'waiting')
-      .order('position', { ascending: false })
-      .limit(1)
-      .single()
+    const { data: rpcResult, error: rpcError } = await supabase.rpc(
+      'create_waitlist_entry',
+      {
+        p_group_type: requestData.group_type,
+        p_joined_at: now.toISOString(),
+        p_created_by_device_id: requestData.device_id,
+        p_deferred: requestData.deferred ?? false,
+        p_participants: requestData.participants.map(p => ({
+          member_id: p.type === 'member' ? p.member_id : '',
+          guest_name: p.type === 'guest' ? p.guest_name : '',
+          participant_type: p.type,
+          account_id: p.account_id,
+        })),
+      }
+    )
 
-    const nextPosition = lastEntry ? lastEntry.position + 1 : 1
-
-    // ===========================================
-    // CREATE WAITLIST ENTRY
-    // ===========================================
-
-    const { data: waitlistEntry, error: waitlistError } = await supabase
-      .from('waitlist')
-      .insert({
-        group_type: requestData.group_type,
-        position: nextPosition,
-        status: 'waiting',
-        joined_at: now.toISOString(),
-        created_by_device_id: requestData.device_id,
-        deferred: requestData.deferred ?? false,
-      })
-      .select()
-      .single()
-
-    if (waitlistError || !waitlistEntry) {
-      console.error('Failed to create waitlist entry:', waitlistError)
-      return addCorsHeaders(internalErrorResponse(`Failed to create waitlist entry: ${waitlistError?.message}`, serverNow))
+    if (rpcError) {
+      console.error('create_waitlist_entry RPC error:', rpcError)
+      return addCorsHeaders(internalErrorResponse(`Failed to create waitlist entry: ${rpcError.message}`, serverNow))
     }
 
-    waitlistId = waitlistEntry.id
-
-    // ===========================================
-    // ADD PARTICIPANTS
-    // ===========================================
-
-    const participantRecords = requestData.participants.map(p => ({
-      waitlist_id: waitlistEntry.id,
-      member_id: p.type === 'member' ? p.member_id : null,
-      guest_name: p.type === 'guest' ? p.guest_name : null,
-      participant_type: p.type,
-      account_id: p.account_id,
-    }))
-
-    const { error: participantsError } = await supabase
-      .from('waitlist_members')
-      .insert(participantRecords)
-
-    if (participantsError) {
-      console.error('Failed to add participants:', participantsError)
-      return addCorsHeaders(internalErrorResponse(`Failed to add participants: ${participantsError.message}`, serverNow))
+    if (!rpcResult?.success) {
+      console.error('create_waitlist_entry failed:', rpcResult?.error)
+      return addCorsHeaders(internalErrorResponse(`Failed to create waitlist entry: ${rpcResult?.error ?? 'unknown error'}`, serverNow))
     }
+
+    waitlistId = rpcResult.waitlist_id
+    const assignedPosition = rpcResult.position
 
     // ===========================================
     // GET PARTICIPANT NAMES FOR RESPONSE
@@ -266,14 +245,14 @@ serve(async (req) => {
       .insert({
         action: 'waitlist_join',
         entity_type: 'waitlist',
-        entity_id: waitlistEntry.id,
+        entity_id: waitlistId,
         device_id: requestData.device_id,
         device_type: requestData.device_type,
         initiated_by: requestData.initiated_by || 'user',
         account_id: requestData.participants[0].account_id,
         request_data: {
           group_type: requestData.group_type,
-          position: nextPosition,
+          position: assignedPosition,
           participant_count: requestData.participants.length,
         },
         outcome: 'success',
@@ -291,11 +270,11 @@ serve(async (req) => {
     return addCorsHeaders(successResponse({
       data: {
         waitlist: {
-          id: waitlistEntry.id,
-          group_type: waitlistEntry.group_type,
-          position: waitlistEntry.position,
-          status: waitlistEntry.status,
-          joined_at: waitlistEntry.joined_at,
+          id: waitlistId,
+          group_type: requestData.group_type,
+          position: assignedPosition,
+          status: 'waiting',
+          joined_at: now.toISOString(),
           participants: participantNames,
         },
       },
