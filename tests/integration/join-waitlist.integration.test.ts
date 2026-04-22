@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import { purgeSessionsForMembers, purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
 
@@ -74,6 +74,15 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
       display_name: 'Integration Test Member (m4)',
       is_primary: false,
       status: 'active',
+    });
+  });
+
+  // Pre-clean fill sessions before every test: FILL_SESSION_IDS are deterministic
+  // and reused across sibling tests that call fillAllCourts(). If afterEach left
+  // any survivors, the next fillAllCourts() insert would PK-collide on those ids.
+  beforeEach(async () => {
+    await safeCleanup('join-waitlist:beforeEach', async () => {
+      await purgeSessionsForMembers(adminClient, [], FILL_SESSION_IDS);
     });
   });
 
