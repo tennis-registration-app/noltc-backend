@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -53,11 +54,12 @@ describe.skipIf(MISSING_ENV)('system ops Edge Functions (integration)', () => {
   });
 
   afterEach(async () => {
-    // Clean up any override we created for the test date
-    await adminClient
-      .from('operating_hours_overrides')
-      .delete()
-      .eq('date', OVERRIDE_TEST_DATE);
+    await safeCleanup('system-ops', async () => {
+      await adminClient
+        .from('operating_hours_overrides')
+        .delete()
+        .eq('date', OVERRIDE_TEST_DATE);
+    });
   });
 
   afterAll(async () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -58,21 +59,10 @@ describe.skipIf(MISSING_ENV)('move-court Edge Function (integration)', () => {
   });
 
   afterEach(async () => {
-    const sessionIds = Object.values(TEST_SESSION_IDS);
-
-    // Find any dynamically-created sessions referencing our test member
-    const { data: dynamicSessions } = await adminClient
-      .from('sessions')
-      .select('id')
-      .eq('registered_by_member_id', TEST_MEMBER_ID);
-
-    const allIds = [...new Set([...sessionIds, ...(dynamicSessions ?? []).map((s: any) => s.id)])];
-
-    await adminClient.from('session_events').delete().in('session_id', allIds);
-    await adminClient.from('session_participants').delete().in('session_id', allIds);
-    await adminClient.from('sessions').delete().in('id', allIds);
-
-    await adminClient.from('blocks').delete().eq('id', TEST_BLOCK_ID);
+    await safeCleanup('move-court', async () => {
+      await purgeSessionsForMembers(adminClient, [TEST_MEMBER_ID], Object.values(TEST_SESSION_IDS));
+      await purgeBlocksByIds(adminClient, [TEST_BLOCK_ID]);
+    });
   });
 
   afterAll(async () => {

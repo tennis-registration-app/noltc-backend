@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -54,22 +55,19 @@ describe.skipIf(MISSING_ENV)('create-block Edge Function (integration)', () => {
   });
 
   afterEach(async () => {
-    // Hard-delete any blocks created during this test (by our admin device or pre-inserted)
-    if (createdBlockIds.length > 0) {
-      await adminClient.from('audit_log').delete().in('entity_id', createdBlockIds);
-      await adminClient.from('blocks').delete().in('id', createdBlockIds);
+    await safeCleanup('create-block', async () => {
+      const trackedIds = [...createdBlockIds];
       createdBlockIds.length = 0;
-    }
-    // Also clean up any blocks our admin device created that we didn't track
-    const { data: strayBlocks } = await adminClient
-      .from('blocks')
-      .select('id')
-      .eq('created_by_device_id', ADMIN_DEVICE_ID);
-    if (strayBlocks && strayBlocks.length > 0) {
-      const ids = strayBlocks.map((b: any) => b.id);
-      await adminClient.from('audit_log').delete().in('entity_id', ids);
-      await adminClient.from('blocks').delete().in('id', ids);
-    }
+
+      const { data: strayBlocks } = await adminClient
+        .from('blocks')
+        .select('id')
+        .eq('created_by_device_id', ADMIN_DEVICE_ID);
+      const strayIds = (strayBlocks ?? []).map((b: any) => b.id);
+
+      const allIds = Array.from(new Set([...trackedIds, ...strayIds]));
+      await purgeBlocksByIds(adminClient, allIds);
+    });
   });
 
   afterAll(async () => {

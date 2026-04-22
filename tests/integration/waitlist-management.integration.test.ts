@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -60,8 +61,9 @@ describe.skipIf(MISSING_ENV)('waitlist management Edge Functions (integration)',
   });
 
   afterEach(async () => {
-    await adminClient.from('waitlist_members').delete().in('waitlist_id', [WL_ENTRY_A, WL_ENTRY_B]);
-    await adminClient.from('waitlist').delete().in('id', [WL_ENTRY_A, WL_ENTRY_B]);
+    await safeCleanup('waitlist-management', async () => {
+      await purgeWaitlistForMembers(adminClient, [TEST_MEMBER_ID], [WL_ENTRY_A, WL_ENTRY_B]);
+    });
   });
 
   afterAll(async () => {

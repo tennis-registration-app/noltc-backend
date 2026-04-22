@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeSessionsForMembers, purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -65,36 +66,13 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
   });
 
   afterEach(async () => {
-    const memberIds = Object.values(TEST_MEMBER_IDS);
-
-    // Find sessions created by the function (registered by test members)
-    const { data: dynSessions } = await adminClient
-      .from('sessions')
-      .select('id')
-      .in('registered_by_member_id', memberIds);
-
-    const dynSessionIds = (dynSessions ?? []).map((s: any) => s.id);
-    const allSessionIds = [...new Set([...dynSessionIds, PRE_INSERTED_SESSION_ID])];
-
-    // Find waitlist entries that reference test members
-    const { data: wlMemberRows } = await adminClient
-      .from('waitlist_members')
-      .select('waitlist_id')
-      .in('member_id', memberIds);
-
-    const waitlistIds = [...new Set((wlMemberRows ?? []).map((r: any) => r.waitlist_id))];
-
-    // Delete in FK-safe order.
-    // waitlist.assigned_session_id references sessions with ON DELETE RESTRICT,
-    // so waitlist rows must be deleted before their referenced sessions.
-    await adminClient.from('transactions').delete().in('session_id', allSessionIds);
-    await adminClient.from('session_events').delete().in('session_id', allSessionIds);
-    await adminClient.from('session_participants').delete().in('session_id', allSessionIds);
-    if (waitlistIds.length > 0) {
-      await adminClient.from('waitlist_members').delete().in('waitlist_id', waitlistIds);
-      await adminClient.from('waitlist').delete().in('id', waitlistIds);
-    }
-    await adminClient.from('sessions').delete().in('id', allSessionIds);
+    await safeCleanup('assign-from-waitlist', async () => {
+      const memberIds = Object.values(TEST_MEMBER_IDS);
+      // waitlist.assigned_session_id references sessions with ON DELETE RESTRICT,
+      // so waitlist must be purged before sessions.
+      await purgeWaitlistForMembers(adminClient, memberIds);
+      await purgeSessionsForMembers(adminClient, memberIds, [PRE_INSERTED_SESSION_ID]);
+    });
   });
 
   afterAll(async () => {
