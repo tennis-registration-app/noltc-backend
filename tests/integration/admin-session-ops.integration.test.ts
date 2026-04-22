@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
+import { purgeActiveTestSessionsOnCourts, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -89,6 +89,7 @@ describe.skipIf(MISSING_ENV)('admin session ops Edge Functions (integration)', (
   afterEach(async () => {
     await safeCleanup('admin-session-ops', async () => {
       await purgeSessionsForMembers(adminClient, [TEST_MEMBER_ID], ALL_SESSION_IDS);
+      await purgeActiveTestSessionsOnCourts(adminClient, [court1Id, court2Id]);
     });
   });
 

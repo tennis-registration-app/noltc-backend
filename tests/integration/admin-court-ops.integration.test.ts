@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
+import { purgeActiveTestSessionsOnCourts, purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -91,6 +91,7 @@ describe.skipIf(MISSING_ENV)('admin court ops Edge Functions (integration)', () 
         ...((adminBlocks ?? []).map((b: any) => b.id) as string[]),
       ]));
       await purgeBlocksByIds(adminClient, blockIds);
+      await purgeActiveTestSessionsOnCourts(adminClient, [court1Id, court2Id, court3Id]);
     });
   });
 

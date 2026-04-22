@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
+import { purgeActiveTestSessionsOnCourts, purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -65,6 +65,7 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
         [PRE_INSERTED_SESSION_ID],
       );
       await purgeBlocksByIds(adminClient, [PRE_INSERTED_BLOCK_ID]);
+      await purgeActiveTestSessionsOnCourts(adminClient, courts.map((c: any) => c.id));
     });
   });
 
