@@ -1,12 +1,23 @@
 /**
  * Global setup for integration tests.
  *
- * Runs once before the entire suite. Deletes all deterministic test data
- * (records with d0000000-* prefix IDs) left over from a previous failed run.
- * This prevents stale sessions, waitlist entries, or members from causing
- * duplicate-key errors or unexpected state in the next run.
+ * Runs once before the entire suite. Deletes all test data left over from a
+ * previous failed run so the next run starts from a clean slate.
  *
- * Deletion order respects FK constraints:
+ * Cleanup uses two passes:
+ *
+ *   1. ID-prefix pass — rows whose own id starts with `d0000000-*` (direct
+ *      inserts from test fixtures).
+ *
+ *   2. FK pass — rows that reference a test fixture by foreign key but
+ *      whose own id is random (created by edge functions during a test
+ *      that crashed before afterEach could clean up).
+ *
+ *      Without this pass, flakes pile up: move-court sees leftover sessions
+ *      on its courts and returns 409, assign-from-waitlist sees a test
+ *      member already on an active session and denies the assignment, etc.
+ *
+ * FK-safe deletion order within each pass:
  *   transactions → session_events → session_participants → sessions
  *   waitlist_members → waitlist
  *   blocks
@@ -28,43 +39,96 @@ export async function setup() {
 
   const supabase = createClient(url, key);
 
-  // Helper: delete rows matching the d0000000-* prefix and return deleted count
-  async function clean(table: string, column: string): Promise<number> {
-    const { data, error } = await supabase
-      .from(table)
-      .delete()
-      .like(column, `${TEST_ID_PREFIX}%`)
-      .select(column);
-    if (error) {
-      console.warn(`Global setup: failed to clean ${table}.${column} — ${error.message}`);
-      return 0;
-    }
-    return data?.length ?? 0;
+  // ---------------- Sessions ----------------
+  // Union of sessions by own-id prefix AND sessions registered by a test member.
+  const { data: sessByPrefix } = await supabase
+    .from('sessions')
+    .select('id')
+    .like('id', `${TEST_ID_PREFIX}%`);
+
+  const { data: sessByMember } = await supabase
+    .from('sessions')
+    .select('id')
+    .like('registered_by_member_id', `${TEST_ID_PREFIX}%`);
+
+  const sessionIds = Array.from(new Set([
+    ...(sessByPrefix ?? []).map((r: any) => r.id),
+    ...(sessByMember ?? []).map((r: any) => r.id),
+  ]));
+
+  if (sessionIds.length > 0) {
+    await supabase.from('transactions').delete().in('session_id', sessionIds);
+    await supabase.from('session_events').delete().in('session_id', sessionIds);
+    await supabase.from('session_participants').delete().in('session_id', sessionIds);
+    await supabase.from('sessions').delete().in('id', sessionIds);
   }
 
-  // FK-safe deletion order
-  const txnCount      = await clean('transactions',        'session_id');
-  const eventsCount   = await clean('session_events',      'session_id');
-  const partCount     = await clean('session_participants', 'session_id');
-  const sessCount     = await clean('sessions',            'id');
+  // ---------------- Waitlist ----------------
+  // Union of waitlist by own-id prefix AND waitlist entries with any test member.
+  const { data: wlByPrefix } = await supabase
+    .from('waitlist')
+    .select('id')
+    .like('id', `${TEST_ID_PREFIX}%`);
 
-  const wmCount       = await clean('waitlist_members',    'waitlist_id');
-  const wlCount       = await clean('waitlist',            'id');
+  const { data: wlByMember } = await supabase
+    .from('waitlist_members')
+    .select('waitlist_id')
+    .like('member_id', `${TEST_ID_PREFIX}%`);
 
-  const blockCount    = await clean('blocks',              'id');
+  const waitlistIds = Array.from(new Set([
+    ...(wlByPrefix ?? []).map((r: any) => r.id),
+    ...(wlByMember ?? []).map((r: any) => r.waitlist_id),
+  ]));
 
-  const memberCount   = await clean('members',             'id');
-  const acctCount     = await clean('accounts',            'id');
+  if (waitlistIds.length > 0) {
+    await supabase.from('waitlist_members').delete().in('waitlist_id', waitlistIds);
+    await supabase.from('waitlist').delete().in('id', waitlistIds);
+  }
+
+  // ---------------- Blocks ----------------
+  // Union of blocks by own-id prefix AND blocks created by a test admin device
+  // (create-block tests use d0000000-* admin devices).
+  const { data: blocksByPrefix } = await supabase
+    .from('blocks')
+    .select('id')
+    .like('id', `${TEST_ID_PREFIX}%`);
+
+  const { data: blocksByDevice } = await supabase
+    .from('blocks')
+    .select('id')
+    .like('created_by_device_id', `${TEST_ID_PREFIX}%`);
+
+  const blockIds = Array.from(new Set([
+    ...(blocksByPrefix ?? []).map((r: any) => r.id),
+    ...(blocksByDevice ?? []).map((r: any) => r.id),
+  ]));
+
+  if (blockIds.length > 0) {
+    // audit_log entries reference blocks by entity_id
+    await supabase.from('audit_log').delete().in('entity_id', blockIds);
+    await supabase.from('blocks').delete().in('id', blockIds);
+  }
+
+  // ---------------- Members / Accounts ----------------
+  // These only use the d0000000-* prefix — no FK pass needed.
+  const { data: memberRows } = await supabase
+    .from('members')
+    .delete()
+    .like('id', `${TEST_ID_PREFIX}%`)
+    .select('id');
+
+  const { data: acctRows } = await supabase
+    .from('accounts')
+    .delete()
+    .like('id', `${TEST_ID_PREFIX}%`)
+    .select('id');
 
   const summary = [
-    sessCount   && `${sessCount} session(s)`,
-    wlCount     && `${wlCount} waitlist entr${wlCount === 1 ? 'y' : 'ies'}`,
-    blockCount  && `${blockCount} block(s)`,
-    memberCount && `${memberCount} member(s)`,
-    acctCount   && `${acctCount} account(s)`,
-    txnCount    && `${txnCount} transaction(s)`,
-    eventsCount && `${eventsCount} session event(s)`,
-    partCount   && `${partCount} participant(s)`,
+    sessionIds.length  && `${sessionIds.length} session(s)`,
+    waitlistIds.length && `${waitlistIds.length} waitlist entr${waitlistIds.length === 1 ? 'y' : 'ies'}`,
+    blockIds.length    && `${blockIds.length} block(s)`,
+    memberRows?.length && `${memberRows.length} member(s)`,
+    acctRows?.length   && `${acctRows.length} account(s)`,
   ].filter(Boolean);
 
   if (summary.length > 0) {
