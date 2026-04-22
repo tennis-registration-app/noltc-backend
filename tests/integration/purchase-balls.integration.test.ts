@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
+import { purgeActiveTestSessionsOnCourts, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -71,6 +71,7 @@ describe.skipIf(MISSING_ENV)('purchase-balls Edge Function (integration)', () =>
         [TEST_MEMBER_ID_1, TEST_MEMBER_ID_2],
         [TEST_SESSION_ID],
       );
+      await purgeActiveTestSessionsOnCourts(adminClient, [courtId]);
     });
   });
 

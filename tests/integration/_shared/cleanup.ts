@@ -133,6 +133,52 @@ export async function purgeBlocksByIds(
 }
 
 /**
+ * Purge any active test sessions on the given courts.
+ *
+ * Only touches sessions that are demonstrably ours: id or
+ * registered_by_member_id starts with `d0000000-`. This guard is airtight —
+ * production data uses random UUIDs and cannot match the prefix — so this
+ * call is safe to make on a shared live database.
+ *
+ * Call this in afterEach (after the normal purge) for every test file that
+ * inserts active sessions on shared courts. The belt-and-suspenders double
+ * purge prevents uq_one_active_session_per_court collisions when the primary
+ * afterEach cleanup silently fails.
+ */
+export async function purgeActiveTestSessionsOnCourts(
+  admin: SupabaseAdmin,
+  courtIds: string[],
+): Promise<void> {
+  if (courtIds.length === 0) return;
+
+  const TEST_PREFIX = 'd0000000-';
+
+  const { data: byOwnId } = await admin
+    .from('sessions')
+    .select('id')
+    .in('court_id', courtIds)
+    .is('actual_end_at', null)
+    .like('id', `${TEST_PREFIX}%`);
+
+  const { data: byMemberId } = await admin
+    .from('sessions')
+    .select('id')
+    .in('court_id', courtIds)
+    .is('actual_end_at', null)
+    .like('registered_by_member_id', `${TEST_PREFIX}%`);
+
+  const sessionIds = Array.from(new Set([
+    ...((byOwnId ?? []).map((r: any) => r.id) as string[]),
+    ...((byMemberId ?? []).map((r: any) => r.id) as string[]),
+  ]));
+
+  if (sessionIds.length === 0) return;
+
+  console.warn(`[cleanup] purgeActiveTestSessionsOnCourts: found ${sessionIds.length} active test session(s) to purge`);
+  await purgeSessionsForMembers(admin, [], sessionIds);
+}
+
+/**
  * Convenience wrapper: run `fn` and log any thrown error instead of
  * propagating it. Use in afterEach so a cleanup failure never cascades into
  * "afterEach hook timed out" or masking the real test failure.

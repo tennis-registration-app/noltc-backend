@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { purgeSessionsForMembers, purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
+import { purgeActiveTestSessionsOnCourts, purgeSessionsForMembers, purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -72,6 +72,7 @@ describe.skipIf(MISSING_ENV)('assign-from-waitlist Edge Function (integration)',
       // so waitlist must be purged before sessions.
       await purgeWaitlistForMembers(adminClient, memberIds);
       await purgeSessionsForMembers(adminClient, memberIds, [PRE_INSERTED_SESSION_ID]);
+      await purgeActiveTestSessionsOnCourts(adminClient, courts.map((c: any) => c.id));
     });
   });
 
