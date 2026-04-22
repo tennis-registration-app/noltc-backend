@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -53,7 +54,9 @@ describe.skipIf(MISSING_ENV)('block management Edge Functions (integration)', ()
   });
 
   afterEach(async () => {
-    await adminClient.from('blocks').delete().in('id', [TEST_BLOCK_ID, TEST_BLOCK_2_ID]);
+    await safeCleanup('block-management', async () => {
+      await purgeBlocksByIds(adminClient, [TEST_BLOCK_ID, TEST_BLOCK_2_ID]);
+    });
   });
 
   afterAll(async () => {

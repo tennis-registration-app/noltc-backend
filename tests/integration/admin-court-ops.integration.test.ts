@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -78,21 +79,19 @@ describe.skipIf(MISSING_ENV)('admin court ops Edge Functions (integration)', () 
   });
 
   afterEach(async () => {
-    // Clean up test sessions (in FK order)
-    const sessionIds = Object.values(TEST_SESSION_IDS);
-    await adminClient.from('session_events').delete().in('session_id', sessionIds);
-    await adminClient.from('session_participants').delete().in('session_id', sessionIds);
-    await adminClient.from('sessions').delete().in('id', sessionIds);
+    await safeCleanup('admin-court-ops', async () => {
+      await purgeSessionsForMembers(adminClient, [TEST_MEMBER_ID], Object.values(TEST_SESSION_IDS));
 
-    // Clean up test blocks (both the static ID and any created by our admin device)
-    await adminClient.from('blocks').delete().eq('id', TEST_BLOCK_ID);
-    const { data: adminBlocks } = await adminClient
-      .from('blocks')
-      .select('id')
-      .eq('created_by_device_id', ADMIN_DEVICE_ID);
-    if (adminBlocks && adminBlocks.length > 0) {
-      await adminClient.from('blocks').delete().in('id', adminBlocks.map((b: any) => b.id));
-    }
+      const { data: adminBlocks } = await adminClient
+        .from('blocks')
+        .select('id')
+        .eq('created_by_device_id', ADMIN_DEVICE_ID);
+      const blockIds = Array.from(new Set([
+        TEST_BLOCK_ID,
+        ...((adminBlocks ?? []).map((b: any) => b.id) as string[]),
+      ]));
+      await purgeBlocksByIds(adminClient, blockIds);
+    });
   });
 
   afterAll(async () => {

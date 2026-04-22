@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -57,25 +58,14 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
   });
 
   afterEach(async () => {
-    const memberIds = Object.values(TEST_MEMBER_IDS);
-
-    // Find sessions created by the function (registered_by_member_id in our test members)
-    const { data: dynamicSessions } = await adminClient
-      .from('sessions')
-      .select('id')
-      .in('registered_by_member_id', memberIds);
-
-    const dynamicSessionIds = (dynamicSessions ?? []).map((s: any) => s.id);
-    const allSessionIds = [...new Set([...dynamicSessionIds, PRE_INSERTED_SESSION_ID])];
-
-    // Delete in FK order
-    await adminClient.from('transactions').delete().in('session_id', allSessionIds);
-    await adminClient.from('session_events').delete().in('session_id', allSessionIds);
-    await adminClient.from('session_participants').delete().in('session_id', allSessionIds);
-    await adminClient.from('sessions').delete().in('id', allSessionIds);
-
-    // Delete pre-inserted block
-    await adminClient.from('blocks').delete().eq('id', PRE_INSERTED_BLOCK_ID);
+    await safeCleanup('assign-court', async () => {
+      await purgeSessionsForMembers(
+        adminClient,
+        Object.values(TEST_MEMBER_IDS),
+        [PRE_INSERTED_SESSION_ID],
+      );
+      await purgeBlocksByIds(adminClient, [PRE_INSERTED_BLOCK_ID]);
+    });
   });
 
   afterAll(async () => {

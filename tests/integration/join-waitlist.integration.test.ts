@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeSessionsForMembers, purgeWaitlistForMembers, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -77,25 +78,12 @@ describe.skipIf(MISSING_ENV)('join-waitlist Edge Function (integration)', () => 
   });
 
   afterEach(async () => {
-    // Find waitlist entries associated with test members before deleting
-    const memberIds = Object.values(TEST_MEMBER_IDS);
-    const { data: wlMembers } = await adminClient
-      .from('waitlist_members')
-      .select('waitlist_id')
-      .in('member_id', memberIds);
-
-    const waitlistIds = (wlMembers ?? []).map((r: any) => r.waitlist_id);
-
-    // Delete waitlist data in FK order
-    await adminClient.from('waitlist_members').delete().in('member_id', memberIds);
-    if (waitlistIds.length > 0) {
-      await adminClient.from('waitlist').delete().in('id', waitlistIds);
-    }
-
-    // Delete fill-court session data in FK order
-    await adminClient.from('session_events').delete().in('session_id', FILL_SESSION_IDS);
-    await adminClient.from('session_participants').delete().in('session_id', FILL_SESSION_IDS);
-    await adminClient.from('sessions').delete().in('id', FILL_SESSION_IDS);
+    await safeCleanup('join-waitlist', async () => {
+      const memberIds = Object.values(TEST_MEMBER_IDS);
+      // Purge waitlist before sessions (ON DELETE RESTRICT on assigned_session_id).
+      await purgeWaitlistForMembers(adminClient, memberIds);
+      await purgeSessionsForMembers(adminClient, memberIds, FILL_SESSION_IDS);
+    });
   });
 
   afterAll(async () => {

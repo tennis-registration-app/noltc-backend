@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { purgeBlocksByIds, safeCleanup } from './_shared/cleanup';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
@@ -49,10 +50,9 @@ describe.skipIf(MISSING_ENV)('cancel-block Edge Function (integration)', () => {
   });
 
   afterEach(async () => {
-    // Clean up test blocks
-    const ids = Object.values(TEST_BLOCK_IDS);
-    await adminClient.from('audit_log').delete().in('entity_id', ids);
-    await adminClient.from('blocks').delete().in('id', ids);
+    await safeCleanup('cancel-block', async () => {
+      await purgeBlocksByIds(adminClient, Object.values(TEST_BLOCK_IDS));
+    });
   });
 
   afterAll(async () => {
