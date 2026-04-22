@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import { purgeActiveTestSessionsOnCourts, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
@@ -50,6 +50,14 @@ describe.skipIf(MISSING_ENV)('end-session Edge Function (integration)', () => {
       display_name: 'Integration Test Member',
       is_primary: true,
       status: 'active',
+    });
+  });
+
+  // Pre-clean before every test: if afterEach fails mid-cascade, the next
+  // test's insertTestSession on the same deterministic id would PK-collide.
+  beforeEach(async () => {
+    await safeCleanup('end-session:beforeEach', async () => {
+      await purgeSessionsForMembers(adminClient, [TEST_MEMBER_ID], Object.values(TEST_SESSION_IDS));
     });
   });
 

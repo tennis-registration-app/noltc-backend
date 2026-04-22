@@ -8,7 +8,7 @@
  *
  * UUID namespace: d0000000-0000-0000-0000-000000011xxx
  */
-import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import { purgeActiveTestSessionsOnCourts, purgeSessionsForMembers, safeCleanup } from './_shared/cleanup';
 
@@ -366,6 +366,15 @@ describe.skipIf(MISSING_ENV)('admin session ops Edge Functions (integration)', (
   //   3. No active session on the displaced session's court
 
   describe('restore-session', () => {
+    // Pre-clean these IDs before each test: if the prior test's afterEach failed
+    // mid-cascade (e.g. session_events survived), the next insertEndedSession
+    // would PK-collide. This runs first regardless of prior cleanup outcome.
+    beforeEach(async () => {
+      await safeCleanup('restore-session:beforeEach', async () => {
+        await purgeSessionsForMembers(adminClient, [], [DISPLACED_SESSION, TAKEOVER_SESSION]);
+      });
+    });
+
     it('restores a displaced session, returns 200 with ok:true and restoredSessionId', async () => {
       await insertEndedSession(DISPLACED_SESSION, court2Id);
       await insertEndEvent(DISPLACED_SESSION, {
@@ -455,6 +464,13 @@ describe.skipIf(MISSING_ENV)('admin session ops Edge Functions (integration)', (
   //     trigger='overtime_takeover' and takeover_session_id matching active session
 
   describe('undo-overtime-takeover', () => {
+    // Same belt-and-suspenders pre-clean as restore-session.
+    beforeEach(async () => {
+      await safeCleanup('undo-overtime-takeover:beforeEach', async () => {
+        await purgeSessionsForMembers(adminClient, [], [DISPLACED_FOR_UNDO, TAKEOVER_SESSION]);
+      });
+    });
+
     it('ends takeover and restores displaced session, returns 200 with both IDs', async () => {
       await insertEndedSession(DISPLACED_FOR_UNDO, court1Id);
       await insertEndEvent(DISPLACED_FOR_UNDO, {
