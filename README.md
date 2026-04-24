@@ -84,7 +84,7 @@ GitHub Actions runs `lint → typecheck → unit tests → integration tests` on
 
 - **Unit tests** always run (no secrets required).
 - **Integration tests** run when repository secrets are available — collaborator PRs and direct pushes to `main`. Fork PRs skip the integration step because GitHub does not expose secrets to forks.
-- The nightly scheduled run (`.github/workflows/integration-tests.yml`) remains as a separate post-deploy confidence check at 7 AM Central, within club operating hours.
+- The nightly scheduled run (`.github/workflows/integration-tests.yml`) fires at 2 AM Central. Global setup overrides operating hours to 24/7 before the suite runs and restores them after, so tests pass at any time.
 
 ### Expanding test scope
 
@@ -138,7 +138,7 @@ npm run test:integration
 
 ### GitHub Actions (nightly)
 
-A scheduled workflow runs the integration tests automatically every day at **7:00 AM Central** (1:00 PM UTC) — within club operating hours so all time-dependent tests pass. It can also be triggered manually from the **Actions tab** for post-deploy confidence checks.
+A scheduled workflow runs the integration tests automatically every day at **2:00 AM Central** (7:00 AM UTC). Global setup temporarily overrides operating hours to 24/7 before the suite runs and restores them after — tests are time-independent. It can also be triggered manually from the **Actions tab** for post-deploy confidence checks.
 
 Workflow file: `.github/workflows/integration-tests.yml`
 
@@ -155,7 +155,7 @@ Requires three repository secrets to be configured at **Settings → Secrets and
 - Integration tests **are** part of the PR gate (`verify.yml`) when repository secrets are available. Fork PRs skip them because GitHub does not expose secrets to forked repositories. The nightly workflow still runs as a separate post-deploy confidence check.
 - Tests use deterministic UUIDs in the `d0000000-*` range for all test fixtures to avoid collisions with real data.
 - `fileParallelism: false` is set in `vitest.integration.config.ts` — tests run sequentially to prevent cross-test database state contamination.
-- Two test cases (assign-court happy paths) depend on the club being within operating hours (America/Chicago). They will return a time-related error if run outside business hours — this is expected behavior, not a test defect.
+- All tests are time-independent: global setup overrides operating hours to 24/7 and teardown restores them.
 
 ## Deployment
 

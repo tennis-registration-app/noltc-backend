@@ -7,30 +7,29 @@
 #   SUPABASE_ANON_KEY        — JWT-format anon key (starts with eyJ...)
 #   SUPABASE_SERVICE_ROLE_KEY — JWT-format service role key (starts with eyJ...)
 #
-# SCHEDULE: 1:00 PM UTC = 7:00 AM Central (America/Chicago)
-#   Scheduled within club operating hours so time-dependent tests in
-#   assign-court and join-waitlist pass (they return "Registration opens at..."
-#   outside of business hours).
+# SCHEDULE: 7:00 AM UTC = 2:00 AM Central (America/Chicago, CDT)
+#   Global setup temporarily overrides operating hours to 24/7 before the
+#   suite runs and restores them after — tests are time-independent.
+#   2 AM Central avoids club activity hours.
 #
 # MANUAL TRIGGER: Can also be run on demand from the GitHub Actions tab via
 #   workflow_dispatch — useful for post-deploy confidence checks.
 #
 # Integration tests also run in the PR gate (verify.yml) when repository
 #   secrets are available. This nightly workflow is a separate post-deploy
-#   confidence check that runs unconditionally within operating hours.
+#   confidence check.
 #
 # IF TESTS FAIL, check:
-#   1. Operating hours — did the cron fire outside club hours? Trigger manually.
-#   2. Supabase instance status — check https://status.supabase.com
-#   3. Edge Function deployment — confirm all functions are deployed and healthy
+#   1. Supabase instance status — check https://status.supabase.com
+#   2. Edge Function deployment — confirm all functions are deployed and healthy
 #      in the Supabase Dashboard → Edge Functions.
-#   4. Secrets — confirm all 3 secrets are configured and not expired/rotated.
+#   3. Secrets — confirm all 3 secrets are configured and not expired/rotated.
 
 name: Integration Tests (Nightly)
 
 on:
   schedule:
-    - cron: '0 13 * * *'  # 1:00 PM UTC = 7:00 AM Central (within operating hours)
+    - cron: '0 7 * * *'   # 7:00 AM UTC = 2:00 AM Central (CDT) — tests override operating hours in setup, safe to run anytime
   workflow_dispatch:       # Manual trigger from the Actions tab
 
 jobs:
