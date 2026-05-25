@@ -48,6 +48,19 @@ describe.skipIf(MISSING_ENV)('waitlist ops Edge Functions (integration)', () => 
       is_active: true,
     });
 
+    // Guarantee the pre-seeded kiosk device exists. Several defer-waitlist and
+    // cancel-waitlist tests send KIOSK_DEVICE_ID as the caller — if the device
+    // row is missing (e.g. from a transient cold-start or an unexpected deletion)
+    // the edge function returns "Device not registered" before it reaches the
+    // waitlist-entry lookup, causing false-negative test failures.
+    await adminClient.from('devices').upsert({
+      id: KIOSK_DEVICE_ID,
+      device_type: 'kiosk',
+      device_name: 'Main Kiosk',
+      device_token: 'kiosk-token-001',
+      is_active: true,
+    });
+
     await adminClient.from('accounts').upsert({
       id: TEST_ACCOUNT_ID,
       member_number: 'TEST-WLOPS-001',
