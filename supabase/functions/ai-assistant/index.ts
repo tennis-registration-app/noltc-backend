@@ -263,10 +263,12 @@ async function executeToolViaEndpoint(
   toolName: string,
   args: Record<string, unknown>,
   supabaseUrl: string,
-  serviceRoleKey: string,
   deviceId: string,
   supabase: any
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  // Inter-function calls authenticate with the anon key (least privilege);
+  // the called endpoints do their own device verification.
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
   // Map tool names to endpoints and transform args as needed
   const endpointMap: Record<string, { endpoint: string; transformArgs?: (args: Record<string, unknown>, supabase: any) => Promise<Record<string, unknown>> | Record<string, unknown> }> = {
@@ -451,7 +453,7 @@ async function executeToolViaEndpoint(
     response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4',
+        'Authorization': `Bearer ${anonKey}`,
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
         'x-device-type': 'admin',
@@ -463,7 +465,7 @@ async function executeToolViaEndpoint(
     response = await fetch(`${supabaseUrl}/functions/v1/${actualEndpoint}`, {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuY2psb3Fld2p1Ym9ka29ydW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDc4MTEsImV4cCI6MjA4MTYyMzgxMX0.JwK7d01-MH57UD80r7XD2X3kv5W5JFBZecmXsrAiTP4',
+        'Authorization': `Bearer ${anonKey}`,
         'Content-Type': 'application/json',
         'x-device-id': deviceId,
         'x-device-type': 'admin',
@@ -599,7 +601,7 @@ const tools = [
         },
         block_type: {
           type: "string",
-          enum: ["lesson", "clinic", "maintenance", "wet", "other"],
+          enum: ["lesson", "clinic", "maintenance", "wet", "league", "other"],
           description: "The type of block"
         },
         title: {
@@ -948,19 +950,28 @@ serve(async (req) => {
 
     const contextStr = shapeContext(courts, waitlist, settings);
 
-    // Calculate Central Time date explicitly (Deno may not support timeZone in toLocaleDateString)
+    // Format dates in the club's timezone — Intl handles the CST/CDT switch
     const utcDate = new Date(serverNow);
-    const centralOffset = -6; // CST is UTC-6 (use -5 for CDT in summer - January is CST)
-    const centralDate = new Date(utcDate.getTime() + centralOffset * 60 * 60 * 1000);
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const todayString = `${dayNames[centralDate.getUTCDay()]}, ${monthNames[centralDate.getUTCMonth()]} ${centralDate.getUTCDate()}, ${centralDate.getUTCFullYear()}`;
+    const todayString = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(utcDate);
 
     // Generate next 7 days for reference
+    const centralDayFormat = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
     const next7Days = [];
     for (let i = 0; i < 7; i++) {
-      const futureDate = new Date(centralDate.getTime() + i * 24 * 60 * 60 * 1000);
-      next7Days.push(`${dayNames[futureDate.getUTCDay()]} = ${monthNames[futureDate.getUTCMonth()]} ${futureDate.getUTCDate()}`);
+      const parts = centralDayFormat.formatToParts(new Date(utcDate.getTime() + i * 24 * 60 * 60 * 1000));
+      const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+      next7Days.push(`${part('weekday')} = ${part('month')} ${part('day')}`);
     }
     const next7DaysString = next7Days.join(', ');
 
@@ -1018,7 +1029,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 4096,
         system: systemPrompt,
         tools: filteredTools,
@@ -1076,7 +1087,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
         // Execute read-only tools directly
         const executedActions: AiAssistantResponse['executed_actions'] = [];
         const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
-        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
         for (const call of proposedToolCalls) {
           try {
@@ -1084,7 +1094,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
               call.tool,
               call.args,
               supabaseUrlExec,
-              serviceRoleKey,
               requestData.device_id,
               supabase
             );
@@ -1117,7 +1126,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
             'anthropic-version': '2023-06-01'
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             messages: [
               {
@@ -1243,7 +1252,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
       // Execute the proposed actions via existing endpoints
       const executedActions: AiAssistantResponse['executed_actions'] = [];
       const supabaseUrlExec = Deno.env.get('SUPABASE_URL')!;
-      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
       for (const call of proposedCalls) {
         try {
@@ -1251,7 +1259,6 @@ The user is an administrator with full access to manage courts, blocks, and sett
             call.tool,
             call.args,
             supabaseUrlExec,
-            serviceRoleKey,
             requestData.device_id,
             supabase
           );
@@ -1317,9 +1324,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
         const toolResult = await executeToolCall(
           supabase,
           content.name,
-          content.input,
-          requestData.device_id,
-          requestData.device_type
+          content.input
         )
         toolResults.push({
           tool: content.name,
@@ -1352,7 +1357,7 @@ The user is an administrator with full access to manage courts, blocks, and sett
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 4096,
           system: systemPrompt,
           tools: filteredTools,
@@ -1438,120 +1443,10 @@ The user is an administrator with full access to manage courts, blocks, and sett
 async function executeToolCall(
   supabase: any,
   toolName: string,
-  input: any,
-  deviceId: string,
-  deviceType: string
+  input: any
 ): Promise<any> {
 
   switch (toolName) {
-    case 'create_block': {
-      // Get court ID from court number
-      const { data: court } = await supabase
-        .from('courts')
-        .select('id')
-        .eq('court_number', input.court_number)
-        .single()
-
-      if (!court) {
-        return { error: `Court ${input.court_number} not found` }
-      }
-
-      const { data: block, error } = await supabase
-        .from('blocks')
-        .insert({
-          court_id: court.id,
-          block_type: input.block_type,
-          title: input.title,
-          starts_at: input.starts_at,
-          ends_at: input.ends_at,
-          created_by_device_id: deviceId,
-        })
-        .select()
-        .single()
-
-      if (error) {
-        return { error: error.message }
-      }
-
-      // Audit log
-      await supabase.from('audit_log').insert({
-        action: 'block_create',
-        entity_type: 'block',
-        entity_id: block.id,
-        device_id: deviceId,
-        device_type: deviceType,
-        initiated_by: 'ai_assistant',
-        request_data: input,
-        outcome: 'success',
-      })
-
-      return {
-        success: true,
-        block_id: block.id,
-        message: `Created ${input.block_type} block "${input.title}" on Court ${input.court_number}`
-      }
-    }
-
-    case 'cancel_block': {
-      let blockToCancel
-
-      if (input.block_id) {
-        const { data } = await supabase
-          .from('blocks')
-          .select('*, courts(court_number)')
-          .eq('id', input.block_id)
-          .is('cancelled_at', null)
-          .single()
-        blockToCancel = data
-      } else if (input.court_number && input.title) {
-        const { data: court } = await supabase
-          .from('courts')
-          .select('id')
-          .eq('court_number', input.court_number)
-          .single()
-
-        if (court) {
-          const { data } = await supabase
-            .from('blocks')
-            .select('*, courts(court_number)')
-            .eq('court_id', court.id)
-            .ilike('title', `%${input.title}%`)
-            .is('cancelled_at', null)
-            .single()
-          blockToCancel = data
-        }
-      }
-
-      if (!blockToCancel) {
-        return { error: 'Block not found' }
-      }
-
-      const { error } = await supabase
-        .from('blocks')
-        .update({ cancelled_at: new Date().toISOString() })
-        .eq('id', blockToCancel.id)
-
-      if (error) {
-        return { error: error.message }
-      }
-
-      await supabase.from('audit_log').insert({
-        action: 'block_cancel',
-        entity_type: 'block',
-        entity_id: blockToCancel.id,
-        device_id: deviceId,
-        device_type: deviceType,
-        initiated_by: 'ai_assistant',
-        request_data: input,
-        outcome: 'success',
-      })
-
-      return {
-        success: true,
-        message: `Cancelled block "${blockToCancel.title}" on Court ${blockToCancel.courts?.court_number}`
-      }
-    }
-
     case 'get_court_status': {
       let query = supabase.from('court_availability_view').select('*')
 
@@ -1736,48 +1631,6 @@ async function executeToolCall(
       }))
 
       return { blocks }
-    }
-
-    case 'update_settings': {
-      const updates: Record<string, string> = {}
-
-      if (input.ball_price !== undefined) {
-        updates.ball_price_cents = String(Math.round(input.ball_price * 100))
-      }
-      if (input.guest_fee_weekday !== undefined) {
-        updates.guest_fee_weekday_cents = String(Math.round(input.guest_fee_weekday * 100))
-      }
-      if (input.guest_fee_weekend !== undefined) {
-        updates.guest_fee_weekend_cents = String(Math.round(input.guest_fee_weekend * 100))
-      }
-
-      if (Object.keys(updates).length === 0) {
-        return { error: 'No settings to update' }
-      }
-
-      for (const [key, value] of Object.entries(updates)) {
-        const { error } = await supabase
-          .from('system_settings')
-          .update({ value, updated_by_device_id: deviceId })
-          .eq('key', key)
-
-        if (error) {
-          return { error: `Failed to update ${key}: ${error.message}` }
-        }
-      }
-
-      await supabase.from('audit_log').insert({
-        action: 'settings_update',
-        entity_type: 'system_settings',
-        entity_id: '00000000-0000-0000-0000-000000000000',
-        device_id: deviceId,
-        device_type: deviceType,
-        initiated_by: 'ai_assistant',
-        request_data: updates,
-        outcome: 'success',
-      })
-
-      return { success: true, updated: updates }
     }
 
     default:
