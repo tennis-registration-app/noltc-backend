@@ -33,7 +33,7 @@ serve(async (req) => {
         plays_180d,
         last_played_at,
         uncleared_streak,
-        accounts(member_number, account_name)
+        accounts(member_number)
       `)
       .eq('status', 'active')
       // Sort by play frequency (most active first), then by name
@@ -83,7 +83,6 @@ serve(async (req) => {
       is_primary: m.is_primary,
       account_id: m.account_id,
       member_number: m.accounts?.member_number,
-      account_name: m.accounts?.account_name,
       plays_180d: m.plays_180d,
       uncleared_streak: m.uncleared_streak || 0,
     }))
