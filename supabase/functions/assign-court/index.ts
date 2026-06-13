@@ -19,6 +19,7 @@ import {
   addCorsHeaders,
   successResponse,
   conflictResponse,
+  errorResponse,
 } from "../_shared/index.ts"
 
 // Business-logic denials that should surface their specific code to the frontend.
@@ -523,15 +524,20 @@ serve(async (req) => {
 
     console.error('Unexpected error in assign-court:', error)
     const code = error instanceof DenialError ? error.code : 'INTERNAL_ERROR'
-    return new Response(JSON.stringify({
-      ok: false,
-      serverNow,
-      code,
-      message: error.message,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+
+    // Map the error code to a proper HTTP status. The response body
+    // (ok/code/message/serverNow) is unchanged — only the status differs, so
+    // the frontend (which branches on body.ok/body.code, not HTTP status) is
+    // unaffected. Court denials are client-side conflicts; everything still
+    // coded INTERNAL_ERROR (validation, operating-hours, geofence, and genuine
+    // failures) maps to 500 for now — splitting those into validation (400) and
+    // business (409) codes is a deliberate follow-up (see PR description).
+    const status =
+      code === 'COURT_NOT_FOUND' ? 404 :
+      code === 'COURT_OCCUPIED' || code === 'COURT_BLOCKED' ? 409 :
+      500
+
+    return addCorsHeaders(errorResponse(code, error.message, serverNow, status))
   }
 })
 
