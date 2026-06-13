@@ -78,6 +78,17 @@ The admin panel (`/admin/`) is currently open-access (no password or session che
 
 The seed data files (`00000000000001_seed_data.sql`, `00000000000002_dev_test_data.sql`) contain placeholder member data. Before production, the actual club member roster (member numbers, display names, account IDs) must be imported into the `accounts` and `members` tables. The seed data should be excluded from the production migration run, or cleared after migration.
 
+> ⚠️ **Blocking precondition — gate `get-members` before importing the real roster.**
+> The `get-members` Edge Function has **no device check** and is callable by anyone holding the public anon key. It returns each member's `display_name`, `member_number` (the family billing number), `account_id`, and play frequency. With placeholder data this is harmless, but the moment the real roster is imported it becomes a full-roster + billing-number disclosure to any anonymous caller.
+>
+> `account_name` (the family account name) was removed from the response in `fix/get-members-trim-account-name` since the frontend never consumed it. `member_number` **cannot** simply be dropped — the registration/ball-purchase flow uses it both as a display disambiguator and as the lookup key for `get-members?member_number=…` account resolution. So gating must happen at the endpoint level.
+>
+> **Do not import real member data until** `get-members` is gated. Minimum viable options, in order of preference:
+> 1. Require a verified `device_id` (registered in `devices`) the way `assign-court` does, and reject unregistered callers.
+> 2. Once admin auth lands (frontend item #3 above), require an authenticated session for the unfiltered/all-members path; keep search/account-scoped lookups device-gated for the kiosk.
+>
+> Tie this to the roster import, not to a date — the risk and the data arrive together.
+
 ---
 
 ## Sharp Edges for New Developers
