@@ -195,10 +195,7 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    // HTTP status intentionally not asserted here. It changes 200→409 once this
-    // PR is deployed, and CI integration tests run against the live deployed
-    // function — so the exact status is pinned in the follow-up test-only PR
-    // (after deploy). The body (ok/code/message) is the stable contract.
+    expect(res.status).toBe(409);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('COURT_OCCUPIED');
@@ -237,8 +234,7 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    // HTTP status intentionally not asserted (200→409 after deploy) — pinned in
-    // the follow-up test-only PR. See COURT_OCCUPIED test for rationale.
+    expect(res.status).toBe(409);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('COURT_BLOCKED');
@@ -255,8 +251,7 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    // HTTP status intentionally not asserted (200→404 after deploy) — pinned in
-    // the follow-up test-only PR. See COURT_OCCUPIED test for rationale.
+    expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('COURT_NOT_FOUND');
@@ -275,10 +270,10 @@ describe.skipIf(MISSING_ENV)('assign-court Edge Function (integration)', () => {
       device_type: 'kiosk',
     });
 
-    // HTTP status intentionally not asserted (200→500 after deploy) — pinned in
-    // the follow-up test-only PR. See COURT_OCCUPIED test for rationale.
-    // NOTE: this is really a validation failure mislabeled as INTERNAL_ERROR;
-    // re-coding it to a validation code (400) is a tracked follow-up.
+    // NOTE: empty participants is really a validation failure currently
+    // mislabeled as INTERNAL_ERROR (hence 500). Re-coding it to a validation
+    // code (400) is a tracked follow-up; this pins the current behavior.
+    expect(res.status).toBe(500);
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(body.code).toBe('INTERNAL_ERROR');
